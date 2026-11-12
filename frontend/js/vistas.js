@@ -405,7 +405,7 @@ function panelOperacion(opId, tenant) {
     if (v.motor || pl.commit) {
       extra += `<p class="muted"><small>Versiones (RF-13): app <strong>${esc(v.app || '—')}</strong> ·
         plantillas <span class="mono">${esc((pl.commit || '').slice(0, 8))}</span>${pl.cambios_sin_commit ? ' (+cambios locales)' : ''} ${pl.ref ? `@${esc(pl.ref)}` : `(${esc(pl.origen || '')})`} ·
-        ${esc(v.motor?.nombre || '')} ${esc(v.motor?.version || '')}
+        ${esc(v.motor?.nombre || '')} ${esc(v.motor?.version || '')}${v.ami ? ` · AMI <span class="mono">${esc(v.ami)}</span>` : ''}
         ${Object.entries(v.motor?.providers || {}).map(([k, ver]) => `· ${esc(k.split('/').pop())} ${esc(ver)}`).join(' ')}</small></p>`;
     }
     return `

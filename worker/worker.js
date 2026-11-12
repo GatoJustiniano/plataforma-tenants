@@ -55,7 +55,6 @@ async function ejecutar(op) {
   const reg = new Registro(op.id);
   const dir = path.join(TRABAJOS, `op-${op.id}`);
   const versiones = { app: tenant.app_version };
-  db.prepare("UPDATE operaciones SET estado = 'en_curso', iniciada_en = ? WHERE id = ?").run(ahora(), op.id);
   reg.linea(`Operación #${op.id} "${op.tipo}" sobre el tenant ${tenant.id} (motor ${tenant.motor}, plan ${tenant.plan})`);
 
   try {
@@ -101,6 +100,7 @@ async function ejecutar(op) {
     reg.paso(suspendido ? 'Deteniendo la instancia' : 'Aplicando la infraestructura');
     await motor.apply(reg, raiz, 'tenant.tfvars.json');
     const outputs = await motor.outputs(reg, raiz);
+    if (outputs.ami_id) versiones.ami = outputs.ami_id; // AMI de Packer usada (RF-13)
 
     if (!suspendido) {
       reg.paso('Esperando a que la aplicación responda');
@@ -134,15 +134,36 @@ function recuperarInterrumpidas() {
   }
 }
 
+// Un solo worker a la vez: si arrancaran dos, el segundo marcaría como interrumpidas
+// las operaciones que el primero está ejecutando.
+const CANDADO = path.join(TRABAJOS, 'worker.pid');
+function tomarCandado() {
+  try {
+    const pid = Number(fs.readFileSync(CANDADO, 'utf8'));
+    if (pid && pid !== process.pid) {
+      process.kill(pid, 0); // lanza si el proceso ya no existe
+      console.error(`Ya hay un worker en ejecución (PID ${pid}). Detenlo antes de iniciar otro.`);
+      process.exit(1);
+    }
+  } catch { /* sin candado o el proceso anterior ya terminó */ }
+  fs.writeFileSync(CANDADO, String(process.pid));
+  process.on('exit', () => { try { if (Number(fs.readFileSync(CANDADO, 'utf8')) === process.pid) fs.rmSync(CANDADO); } catch { /* nada */ } });
+}
+
+// Toma la siguiente operación pendiente en una sola sentencia (atómica)
+const tomarSiguiente = db.prepare(`UPDATE operaciones SET estado = 'en_curso', iniciada_en = ?
+  WHERE id = (SELECT id FROM operaciones WHERE estado = 'pendiente' ORDER BY id LIMIT 1) RETURNING *`);
+
 async function bucle() {
   fs.mkdirSync(TRABAJOS, { recursive: true });
+  tomarCandado();
   recuperarInterrumpidas();
   console.log(`Worker listo. Plantillas: ${process.env.INFRA_DIR || `${process.env.INFRA_REPO}@${process.env.INFRA_REF || 'main'}`}`);
   let detener = false;
   process.on('SIGINT', () => { console.log('Deteniendo al terminar la operación actual...'); detener = true; });
 
   while (!detener) {
-    const op = db.prepare("SELECT * FROM operaciones WHERE estado = 'pendiente' ORDER BY id LIMIT 1").get();
+    const op = tomarSiguiente.get(ahora());
     if (!op) { await dormir(INTERVALO_MS); continue; }
     console.log(`→ #${op.id} ${op.tipo} ${op.tenant_id}`);
     await ejecutar(op);
