@@ -13,6 +13,7 @@ Este repo forma el sistema completo junto con otros dos:
 ## Estructura
 
 ```
+catalogo/   planes.json: catálogo de planes que usan la API y el worker
 frontend/   Panel de administración: Tenants, Planes, Monitoreo, Auditoría
 api/        API REST: tenants, planes, operaciones; encola los trabajos
 worker/     Ejecuta las operaciones: clona asistencia-infra@tag y corre el motor elegido
@@ -24,6 +25,7 @@ docs/       Arquitectura, catálogo de planes, instrucciones de operación y evi
 ## Documentación
 
 - [Arquitectura y flujo de creación de un tenant](docs/arquitectura.md)
+- [Catálogo de planes y límites](docs/planes.md)
 
 ## Alcance de la demo
 

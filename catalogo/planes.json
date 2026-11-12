@@ -1,0 +1,111 @@
+{
+  "version": "2026-11-12",
+  "region": "us-east-1",
+  "moneda": "USD",
+  "planes": [
+    {
+      "id": "basico",
+      "nombre": "Básico",
+      "descripcion": "Para instituciones pequeñas",
+      "infra": {
+        "instance_type": "t3.micro",
+        "vcpu": 2,
+        "memoria_gib": 1,
+        "root_volume_gb": 8,
+        "data_volume_gb": 10,
+        "volume_type": "gp3"
+      },
+      "limites": {
+        "estudiantes": 100,
+        "docentes": 5,
+        "cursos": 10,
+        "tamano_importacion_mb": 2
+      },
+      "operacion": {
+        "retencion_suspendido_dias": 30,
+        "respaldo": "semanal",
+        "retencion_respaldos_dias": 7
+      },
+      "monitoreo": {
+        "intervalo_metricas_s": 60
+      },
+      "costo_estimado": {
+        "activo_mes": 12.68,
+        "suspendido_mes": 1.44
+      }
+    },
+    {
+      "id": "estandar",
+      "nombre": "Estándar",
+      "descripcion": "Para instituciones en crecimiento",
+      "infra": {
+        "instance_type": "t3.small",
+        "vcpu": 2,
+        "memoria_gib": 2,
+        "root_volume_gb": 8,
+        "data_volume_gb": 20,
+        "volume_type": "gp3"
+      },
+      "limites": {
+        "estudiantes": 1000,
+        "docentes": 50,
+        "cursos": 100,
+        "tamano_importacion_mb": 5
+      },
+      "operacion": {
+        "retencion_suspendido_dias": 90,
+        "respaldo": "diario",
+        "retencion_respaldos_dias": 14
+      },
+      "monitoreo": {
+        "intervalo_metricas_s": 30
+      },
+      "costo_estimado": {
+        "activo_mes": 21.07,
+        "suspendido_mes": 2.24
+      }
+    },
+    {
+      "id": "avanzado",
+      "nombre": "Avanzado",
+      "descripcion": "Para alta demanda",
+      "infra": {
+        "instance_type": "t3.medium",
+        "vcpu": 2,
+        "memoria_gib": 4,
+        "root_volume_gb": 8,
+        "data_volume_gb": 40,
+        "volume_type": "gp3"
+      },
+      "limites": {
+        "estudiantes": 5000,
+        "docentes": 200,
+        "cursos": 500,
+        "tamano_importacion_mb": 10
+      },
+      "operacion": {
+        "retencion_suspendido_dias": 180,
+        "respaldo": "diario",
+        "retencion_respaldos_dias": 30
+      },
+      "monitoreo": {
+        "intervalo_metricas_s": 15
+      },
+      "costo_estimado": {
+        "activo_mes": 37.86,
+        "suspendido_mes": 3.84
+      }
+    }
+  ],
+  "comunes": {
+    "incluye": ["Frontend y API", "Base de datos SQLite aislada en EBS cifrado", "Monitoreo en Grafana"],
+    "alertas": {
+      "servicio_caido_min": 2,
+      "errores_5xx_por_min": 5,
+      "cpu_porcentaje": 85,
+      "memoria_porcentaje": 90,
+      "disco_datos_porcentaje": 80,
+      "estudiantes_porcentaje_limite": 90
+    }
+  }
+}
