@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tenant Control Center</title>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="marca">
+      <div class="logo">A</div>
+      <div><strong>Tenant</strong><small>CONTROL CENTER</small></div>
+    </div>
+    <nav>
+      <p class="seccion">PLATAFORMA</p>
+      <a href="#/inicio" data-ruta="inicio">Inicio</a>
+      <a href="#/tenants" data-ruta="tenants">Tenants</a>
+      <a href="#/planes" data-ruta="planes">Planes</a>
+      <a href="#/monitoreo" data-ruta="monitoreo">Monitoreo</a>
+      <a href="#/auditoria" data-ruta="auditoria">Auditoría</a>
+      <p class="seccion">ADMINISTRACIÓN</p>
+      <a href="#/configuracion" data-ruta="configuracion">Configuración</a>
+    </nav>
+    <div class="usuario"><span class="avatar" id="avatar">AD</span><div><strong id="nombre-usuario">admin</strong><small>Administrador</small></div></div>
+  </aside>
+
+  <main>
+    <header class="barra"><nav id="migas"></nav><a class="boton primario chico" href="#/tenants/nuevo">+ Crear tenant</a></header>
+    <section id="vista" class="vista"></section>
+  </main>
+
+  <div id="aviso" class="aviso" hidden></div>
+
+  <script src="js/api.js"></script>
+  <script src="js/vistas.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
