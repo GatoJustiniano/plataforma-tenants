@@ -1,0 +1,16 @@
+{
+  "name": "plataforma-tenants",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Portal para crear y administrar tenants de la app de asistencia",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "api": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning api/server.js",
+    "worker": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning worker/worker.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

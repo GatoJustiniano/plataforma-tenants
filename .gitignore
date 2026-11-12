@@ -5,6 +5,8 @@ node_modules/
 
 # Base de datos local de la plataforma
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
 
 # Carpetas de trabajo del worker (clones de asistencia-infra por operación)
@@ -16,3 +18,6 @@ worker/trabajos/
 *.tfstate
 *.tfstate.*
 *.auto.tfvars
+
+# Worker
+worker/.cache/

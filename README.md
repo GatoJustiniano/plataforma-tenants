@@ -14,13 +14,57 @@ Este repo forma el sistema completo junto con otros dos:
 
 ```
 catalogo/   planes.json: catálogo de planes que usan la API y el worker
+comun/      BD de la plataforma (SQLite integrado en Node), catálogo y saneo de secretos
 frontend/   Panel de administración: Tenants, Planes, Monitoreo, Auditoría
 api/        API REST: tenants, planes, operaciones; encola los trabajos
-worker/     Ejecuta las operaciones: clona asistencia-infra@tag y corre el motor elegido
+worker/     Ejecuta las operaciones: copia/clona asistencia-infra y corre el motor elegido
 infra/      Terraform de la propia plataforma: VPC compartida, EC2 del portal, bucket S3 del estado, roles IAM
 grafana/    Provisioning de Prometheus y Grafana: datasources, paneles y alertas como código
 docs/       Arquitectura, catálogo de planes, instrucciones de operación y evidencias
 ```
+
+## Ejecutar en local
+
+Requisitos: Node 22.13 o superior, Terraform 1.10 o superior (u OpenTofu), git y el AWS CLI con un perfil configurado. Antes, aplicar una vez `infra/bootstrap` e `infra/red` (ver [infra/README.md](infra/README.md)).
+
+```bash
+npm install
+```
+
+```bash
+cp .env.example .env
+```
+
+Se necesitan dos terminales: una para la API (y el panel) en http://localhost:4000 y otra para el worker.
+
+```bash
+npm run api
+```
+
+```bash
+npm run worker
+```
+
+La API **no ejecuta** infraestructura: registra la operación y responde `202`. El worker la toma, copia las plantillas (`INFRA_DIR`) o las clona (`INFRA_REPO@INFRA_REF`), ejecuta el motor y guarda el progreso. Así se cumple el requisito "aprovisionamientos como trabajos en segundo plano".
+
+### API
+
+| Método y ruta | Qué hace |
+|---|---|
+| `GET /api/planes` | Catálogo de planes (RF-01, RF-03) |
+| `GET /api/tenants?nombre=&estado=&plan=&entorno=` | Buscar tenants (RF-14) |
+| `GET /api/tenants/:id` | Detalle con su historial de operaciones |
+| `POST /api/tenants` | Crear: `{id, nombre, contacto_email, entorno, plan, motor}`. Responde `202` (RF-07, RF-08). |
+| `POST /api/tenants/:id/suspender` · `/reanudar` | Ciclo de vida (RF-16) |
+| `POST /api/tenants/:id/eliminar` | **Solo previsualiza:** calcula con `plan -destroy` qué se borrará (RF-18) |
+| `POST /api/operaciones/:id/confirmar` | Confirma la eliminación: `{confirmacion: "<id del tenant>"}` |
+| `POST /api/operaciones/:id/cancelar` | Cancela la eliminación |
+| `GET /api/operaciones/:id?desde=N` | Paso actual, error comprensible y log saneado (RF-11) |
+| `POST /api/operaciones/:id/reintentar` | Reintenta una operación fallida sobre el mismo estado, sin duplicar recursos (RF-12) |
+
+Autenticación: si `PLATAFORMA_ADMIN_KEY` tiene valor, cada llamada debe enviar la cabecera `X-Admin-Key`. La cabecera `X-Usuario` queda registrada como quién pidió la operación.
+
+Cada operación guarda en `versiones` lo que usó: la versión de la app, el origen y commit de las plantillas (y si tenían cambios sin commit) y la versión del motor y de los providers (RF-13).
 
 ## Documentación
 
