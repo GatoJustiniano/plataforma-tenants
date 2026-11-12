@@ -1,0 +1,18 @@
+# Node
+node_modules/
+.env
+*.log
+
+# Base de datos local de la plataforma
+*.db
+*.sqlite
+
+# Carpetas de trabajo del worker (clones de asistencia-infra por operación)
+worker/trabajos/
+
+# Terraform de la plataforma
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.auto.tfvars
