@@ -131,7 +131,7 @@ stateDiagram-v2
 - **Aislamiento:** cada tenant tiene su propia EC2, su propio volumen de datos y su propio Security Group. El SG solo permite HTTP desde internet y los puertos de métricas desde el SG de la plataforma; no hay tráfico entre tenants.
 - **Red compartida:** todos los tenants usan una sola VPC con subred pública, en vez de una VPC por tenant. AWS limita a 5 VPC por región por defecto, y el aislamiento se logra con los Security Groups.
 - **Secretos:** se guardan en SSM Parameter Store (SecureString) bajo `/asistencia/<tenant>/...`. No van en tfvars, en el repo ni en los logs; el worker filtra los valores sensibles antes de guardar la salida del motor.
-- **Estado del motor:** se guarda en un bucket S3 con cifrado y versionado, bloqueo de acceso público y lock. Cada tenant usa la clave `tenants/<id>/terraform.tfstate`, y el acceso está restringido al rol IAM del worker.
+- **Estado del motor:** se guarda en un bucket S3 con cifrado y versionado, bloqueo de acceso público y lock nativo de S3. Cada tenant usa la clave `tenants/<id>/terraform.tfstate`, y el acceso está restringido al rol IAM del worker.
 - **Trabajos en segundo plano:** la API solo encola trabajos. El worker los ejecuta de uno en uno por tenant y guarda el historial de cada operación (quién, cuándo, resultado y log).
 - **Suspensión:** se detiene la EC2 y se conserva el EBS de datos; solo se paga el disco. Los datos se mantienen según la política de retención del plan.
 - **Costos:** la plataforma puede destruir todos los tenants de prueba con una operación; para la demo se usan t3.micro.
@@ -139,6 +139,8 @@ stateDiagram-v2
 - **Base de datos (decidido):** SQLite en un volumen EBS dedicado a cada tenant, cifrado y montado en `/var/lib/asistencia`. La app no cambia (RF-21) y el plan define el tamaño del volumen.
 - **Alcance de la demo (decidido):** de 3 a 4 tenants. La cuota de la cuenta es de 16 vCPU On-Demand: con instancias t3.micro/small (2 vCPU cada una), 4 tenants y la plataforma suman 10 vCPU.
 
-## 6. Pendiente de confirmar
+Detalle de cómo se protege el estado: [infra/README.md](../infra/README.md).
 
-- Si respaldar y restaurar sigue siendo obligatorio: RF-19 está tachado, pero el entregable 6 todavía lo menciona. Si se pide, basta con snapshots del EBS.
+## 6. Fase final
+
+- Respaldar y restaurar (RF-19, entregable 6) con snapshots del volumen de datos de cada tenant, según la política de cada plan en [planes.md](planes.md).

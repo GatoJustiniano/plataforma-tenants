@@ -25,7 +25,7 @@ Este documento lo explica; si cambia un valor, se cambia primero en el JSON.
 | **Costo aprox. activo** | ~12.7 USD/mes | ~21.1 USD/mes | ~37.9 USD/mes |
 | **Costo aprox. suspendido** | ~1.4 USD/mes | ~2.2 USD/mes | ~3.8 USD/mes |
 
-\* RF-19 (respaldar y restaurar) aparece tachado en el enunciado, pero el entregable 6 todavía lo menciona. Si se confirma que es obligatorio, se implementa con snapshots del volumen de datos usando estos valores.
+\* Los respaldos se implementan en la fase final del proyecto, con snapshots del volumen de datos y estos valores. RF-19 aparece tachado en el enunciado, pero el entregable 6 todavía lo menciona.
 
 Todos los planes incluyen frontend y API, una base de datos aislada en su propio volumen EBS cifrado y monitoreo en Grafana.
 
