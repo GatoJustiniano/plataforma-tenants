@@ -1,0 +1,22 @@
+[Unit]
+Description=Prometheus
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=prometheus
+Group=prometheus
+# Solo escucha en localhost: Grafana está en la misma máquina y no se expone a internet
+ExecStart=/usr/local/bin/prometheus \
+  --config.file=/etc/prometheus/prometheus.yml \
+  --storage.tsdb.path=/var/lib/prometheus \
+  --storage.tsdb.retention.time={{ retencion_dias }}d \
+  --web.listen-address=127.0.0.1:9090
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

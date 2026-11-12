@@ -1,0 +1,12 @@
+grafana_url_local: "http://127.0.0.1:3000"
+grafana_cuenta_servicio: plataforma-tenants
+# Los dan vars.json (Terraform, desde catalogo/planes.json)
+region: us-east-1
+ssm_prefijo: /asistencia/plataforma
+alertas:
+  servicio_caido_min: 2
+  errores_5xx_por_min: 5
+  cpu_porcentaje: 85
+  memoria_porcentaje: 90
+  disco_datos_porcentaje: 80
+  estudiantes_porcentaje_limite: 90

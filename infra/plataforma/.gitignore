@@ -1,0 +1,4 @@
+# Valores locales (IP de administración) y el paquete del playbook
+terraform.tfvars
+.ansible.zip
+tfplan

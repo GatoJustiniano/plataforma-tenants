@@ -1,0 +1,8 @@
+apiVersion: 1
+providers:
+  - name: asistencia
+    folder: Asistencia
+    type: file
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

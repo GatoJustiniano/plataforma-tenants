@@ -1,0 +1,66 @@
+- name: Usuario del servicio
+  ansible.builtin.user:
+    name: prometheus
+    system: true
+    shell: /sbin/nologin
+    create_home: false
+
+- name: Directorios de configuración y datos
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: prometheus
+    group: prometheus
+    mode: "0755"
+  loop:
+    - /etc/prometheus
+    - /var/lib/prometheus
+
+- name: Descargar Prometheus (verifica el sha256 publicado)
+  ansible.builtin.get_url:
+    url: "{{ prometheus_base_url }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
+    dest: "/opt/prometheus-{{ prometheus_version }}.tar.gz"
+    checksum: "sha256:{{ prometheus_base_url }}/sha256sums.txt"
+    mode: "0644"
+
+- name: Descomprimir
+  ansible.builtin.unarchive:
+    src: "/opt/prometheus-{{ prometheus_version }}.tar.gz"
+    dest: /opt
+    remote_src: true
+    creates: "/opt/prometheus-{{ prometheus_version }}.linux-amd64/prometheus"
+
+- name: Instalar los binarios
+  ansible.builtin.copy:
+    src: "/opt/prometheus-{{ prometheus_version }}.linux-amd64/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    remote_src: true
+    mode: "0755"
+  loop:
+    - prometheus
+    - promtool
+  notify: Reiniciar prometheus
+
+- name: Configuración (descubre los tenants por tags de EC2)
+  ansible.builtin.template:
+    src: prometheus.yml.j2
+    dest: /etc/prometheus/prometheus.yml
+    owner: prometheus
+    group: prometheus
+    mode: "0644"
+    validate: /usr/local/bin/promtool check config %s
+  notify: Recargar prometheus
+
+- name: Servicio systemd
+  ansible.builtin.template:
+    src: prometheus.service.j2
+    dest: /etc/systemd/system/prometheus.service
+    mode: "0644"
+  notify: Reiniciar prometheus
+
+- name: Arrancar Prometheus
+  ansible.builtin.systemd:
+    name: prometheus
+    enabled: true
+    state: started
+    daemon_reload: true

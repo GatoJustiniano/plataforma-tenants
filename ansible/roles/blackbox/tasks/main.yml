@@ -1,0 +1,81 @@
+# blackbox_exporter: Prometheus le pide que consulte /api/health de cada tenant y
+# obtiene probe_success (1 = responde, 0 = caído) y el tiempo de respuesta.
+- name: Usuario del servicio
+  ansible.builtin.user:
+    name: blackbox
+    system: true
+    shell: /sbin/nologin
+    create_home: false
+
+- name: Descargar blackbox_exporter (verifica el sha256 publicado)
+  ansible.builtin.get_url:
+    url: "{{ blackbox_base_url }}/blackbox_exporter-{{ blackbox_version }}.linux-amd64.tar.gz"
+    dest: "/opt/blackbox_exporter-{{ blackbox_version }}.tar.gz"
+    checksum: "sha256:{{ blackbox_base_url }}/sha256sums.txt"
+    mode: "0644"
+
+- name: Descomprimir
+  ansible.builtin.unarchive:
+    src: "/opt/blackbox_exporter-{{ blackbox_version }}.tar.gz"
+    dest: /opt
+    remote_src: true
+    creates: "/opt/blackbox_exporter-{{ blackbox_version }}.linux-amd64/blackbox_exporter"
+
+- name: Instalar el binario
+  ansible.builtin.copy:
+    src: "/opt/blackbox_exporter-{{ blackbox_version }}.linux-amd64/blackbox_exporter"
+    dest: /usr/local/bin/blackbox_exporter
+    remote_src: true
+    mode: "0755"
+  notify: Reiniciar blackbox
+
+- name: Directorio de configuración
+  ansible.builtin.file:
+    path: /etc/blackbox
+    state: directory
+    mode: "0755"
+
+- name: Módulos de sondeo
+  ansible.builtin.copy:
+    dest: /etc/blackbox/blackbox.yml
+    mode: "0644"
+    content: |
+      modules:
+        http_2xx:
+          prober: http
+          timeout: 5s
+          http:
+            preferred_ip_protocol: ip4
+            valid_status_codes: [200]
+    validate: /usr/local/bin/blackbox_exporter --config.check --config.file=%s
+  notify: Reiniciar blackbox
+
+- name: Servicio systemd
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/blackbox_exporter.service
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=Prometheus blackbox_exporter
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      User=blackbox
+      Group=blackbox
+      ExecStart=/usr/local/bin/blackbox_exporter --config.file=/etc/blackbox/blackbox.yml --web.listen-address=127.0.0.1:9115
+      Restart=always
+      NoNewPrivileges=true
+      ProtectSystem=strict
+      ProtectHome=true
+
+      [Install]
+      WantedBy=multi-user.target
+  notify: Reiniciar blackbox
+
+- name: Arrancar blackbox_exporter
+  ansible.builtin.systemd:
+    name: blackbox_exporter
+    enabled: true
+    state: started
+    daemon_reload: true

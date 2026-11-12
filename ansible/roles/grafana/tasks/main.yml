@@ -1,0 +1,189 @@
+- name: Repositorio oficial de Grafana (paquetes firmados)
+  ansible.builtin.yum_repository:
+    name: grafana
+    description: Grafana OSS
+    baseurl: https://rpm.grafana.com
+    gpgkey: https://rpm.grafana.com/gpg.key
+    gpgcheck: true
+    repo_gpgcheck: true
+    sslverify: true
+    sslcacert: /etc/pki/tls/certs/ca-bundle.crt
+
+- name: Instalar Grafana
+  ansible.builtin.dnf:
+    name: grafana
+    state: present
+
+# ---------- Configuración y secretos ----------
+
+- name: Leer la clave de admin desde SSM
+  ansible.builtin.command:
+    argv: [aws, ssm, get-parameter, --region, "{{ region }}", --with-decryption,
+           --name, "{{ ssm_prefijo }}/grafana-admin", --query, Parameter.Value, --output, text]
+  register: grafana_admin
+  changed_when: false
+  no_log: true
+
+- name: Variables de entorno de Grafana (solo legibles por root)
+  ansible.builtin.copy:
+    dest: /etc/grafana/plataforma.env
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      GF_SECURITY_ADMIN_USER=admin
+      GF_SECURITY_ADMIN_PASSWORD={{ grafana_admin.stdout }}
+      GF_SECURITY_DISABLE_GRAVATAR=true
+      GF_USERS_ALLOW_SIGN_UP=false
+      GF_AUTH_ANONYMOUS_ENABLED=false
+      GF_ANALYTICS_REPORTING_ENABLED=false
+      GF_ANALYTICS_CHECK_FOR_UPDATES=false
+      GF_NEWS_NEWS_FEED_ENABLED=false
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/tenants.json
+  no_log: true
+  notify: Reiniciar grafana
+
+- name: Directorio del override de systemd
+  ansible.builtin.file:
+    path: /etc/systemd/system/grafana-server.service.d
+    state: directory
+    mode: "0755"
+
+- name: Cargar las variables en el servicio
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/grafana-server.service.d/plataforma.conf
+    mode: "0644"
+    content: |
+      [Service]
+      EnvironmentFile=/etc/grafana/plataforma.env
+  notify: Reiniciar grafana
+
+# ---------- Provisioning: datasource, dashboards y alertas ----------
+
+- name: Directorios de provisioning y dashboards
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: grafana
+    mode: "0755"
+  loop:
+    - /etc/grafana/provisioning/datasources
+    - /etc/grafana/provisioning/dashboards
+    - /etc/grafana/provisioning/alerting
+    - /var/lib/grafana/dashboards
+
+- name: Datasource Prometheus
+  ansible.builtin.copy:
+    src: datasource.yml
+    dest: /etc/grafana/provisioning/datasources/prometheus.yml
+    group: grafana
+    mode: "0640"
+  notify: Reiniciar grafana
+
+- name: Proveedor de dashboards
+  ansible.builtin.copy:
+    src: dashboards.yml
+    dest: /etc/grafana/provisioning/dashboards/asistencia.yml
+    group: grafana
+    mode: "0640"
+  notify: Reiniciar grafana
+
+- name: Dashboard de tenants
+  ansible.builtin.copy:
+    src: tenants.json
+    dest: /var/lib/grafana/dashboards/tenants.json
+    group: grafana
+    mode: "0644"
+
+- name: Reglas de alerta (umbrales de catalogo/planes.json)
+  ansible.builtin.template:
+    src: alertas.yml.j2
+    dest: /etc/grafana/provisioning/alerting/alertas.yml
+    group: grafana
+    mode: "0640"
+  notify: Reiniciar grafana
+
+- name: Arrancar Grafana
+  ansible.builtin.systemd:
+    name: grafana-server
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Aplicar cambios pendientes antes de usar la API
+  ansible.builtin.meta: flush_handlers
+
+- name: Esperar a que Grafana responda
+  ansible.builtin.uri:
+    url: "{{ grafana_url_local }}/api/health"
+  register: salud
+  until: salud.status == 200
+  retries: 30
+  delay: 5
+
+# ---------- Token de solo lectura para la API de la plataforma (RF-29) ----------
+
+- name: ¿Ya existe el token en SSM?
+  ansible.builtin.command:
+    argv: [aws, ssm, get-parameter, --region, "{{ region }}", --name, "{{ ssm_prefijo }}/grafana-token", --query, Parameter.Name]
+  register: token_ssm
+  changed_when: false
+  failed_when: false
+
+- name: Crear la cuenta de servicio y su token
+  when: token_ssm.rc != 0
+  block:
+    - name: Buscar la cuenta de servicio
+      ansible.builtin.uri:
+        url: "{{ grafana_url_local }}/api/serviceaccounts/search?query={{ grafana_cuenta_servicio }}"
+        user: admin
+        password: "{{ grafana_admin.stdout }}"
+        force_basic_auth: true
+      register: busqueda
+      no_log: true
+
+    - name: Crear la cuenta de servicio (rol Viewer)
+      ansible.builtin.uri:
+        url: "{{ grafana_url_local }}/api/serviceaccounts"
+        method: POST
+        user: admin
+        password: "{{ grafana_admin.stdout }}"
+        force_basic_auth: true
+        body_format: json
+        body: { name: "{{ grafana_cuenta_servicio }}", role: Viewer }
+        status_code: [200, 201]
+      register: creada
+      when: busqueda.json.totalCount == 0
+      no_log: true
+
+    - name: Crear el token
+      ansible.builtin.uri:
+        url: "{{ grafana_url_local }}/api/serviceaccounts/{{ (creada.json.id if busqueda.json.totalCount == 0 else busqueda.json.serviceAccounts[0].id) }}/tokens"
+        method: POST
+        user: admin
+        password: "{{ grafana_admin.stdout }}"
+        force_basic_auth: true
+        body_format: json
+        body: { name: "plataforma-{{ ansible_date_time.epoch }}" }
+      register: token
+      no_log: true
+
+    - name: Guardar el token en un archivo temporal (no en la línea de comandos)
+      ansible.builtin.copy:
+        dest: /root/.grafana-token
+        content: "{{ token.json.key }}"
+        mode: "0600"
+      no_log: true
+
+    - name: Guardar el token en SSM como SecureString
+      ansible.builtin.command:
+        argv: [aws, ssm, put-parameter, --region, "{{ region }}", --name, "{{ ssm_prefijo }}/grafana-token",
+               --type, SecureString, --overwrite, --value, "file:///root/.grafana-token"]
+      changed_when: true
+
+  always:
+    - name: Borrar el archivo temporal
+      ansible.builtin.file:
+        path: /root/.grafana-token
+        state: absent

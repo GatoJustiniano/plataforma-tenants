@@ -1,0 +1,81 @@
+# Generado por Ansible (rol prometheus). No editar a mano.
+#
+# Descubre las EC2 de los tenants por sus tags (Proyecto=asistencia, Componente=tenant) y solo
+# las que están encendidas: un tenant suspendido deja de medirse y no dispara alertas.
+# Hay un trabajo por plan porque cada plan tiene su intervalo de métricas (catalogo/planes.json);
+# la etiqueta "job" se normaliza para que los paneles y alertas no dependan del plan.
+
+global:
+  scrape_interval: 60s
+  evaluation_interval: 60s
+  external_labels:
+    plataforma: asistencia
+
+{% macro etiquetas(job) %}
+      - source_labels: [__meta_ec2_tag_Tenant]
+        target_label: tenant
+      - source_labels: [__meta_ec2_tag_Tenant]
+        target_label: instance
+      - source_labels: [__meta_ec2_tag_Entorno]
+        target_label: entorno
+      - source_labels: [__meta_ec2_tag_Plan]
+        target_label: plan
+      - source_labels: [__meta_ec2_instance_id]
+        target_label: instance_id
+      - target_label: job
+        replacement: {{ job }}
+{% endmacro %}
+{% macro descubrir(plan, puerto) %}
+    ec2_sd_configs:
+      - region: {{ region }}
+        port: {{ puerto }}
+        refresh_interval: 60s
+        filters:
+          - name: "tag:Proyecto"
+            values: [asistencia]
+          - name: "tag:Componente"
+            values: [tenant]
+          - name: "tag:Plan"
+            values: ["{{ plan }}"]
+          - name: instance-state-name
+            values: [running]
+{% endmacro %}
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["127.0.0.1:9090"]
+
+  - job_name: blackbox
+    static_configs:
+      - targets: ["127.0.0.1:9115"]
+{% for plan, intervalo in intervalos_planes.items() %}
+
+  # ---------- Plan {{ plan }}: cada {{ intervalo }}s ----------
+
+  # CPU, memoria, disco y estado de servicios (node_exporter, en la AMI de Packer)
+  - job_name: node_{{ plan }}
+    scrape_interval: {{ intervalo }}s
+{{ descubrir(plan, 9100) }}
+    relabel_configs:
+{{ etiquetas('node') }}
+  # Peticiones, errores 5xx, latencia, BD y uso del plan (métricas de la app)
+  - job_name: app_{{ plan }}
+    scrape_interval: {{ intervalo }}s
+{{ descubrir(plan, 9101) }}
+    relabel_configs:
+{{ etiquetas('app') }}
+  # Disponibilidad: blackbox_exporter pide /api/health por la IP privada del tenant
+  - job_name: disponibilidad_{{ plan }}
+    scrape_interval: {{ intervalo }}s
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+{{ descubrir(plan, 80) }}
+    relabel_configs:
+{{ etiquetas('disponibilidad') }}
+      - source_labels: [__address__]
+        target_label: __param_target
+        replacement: http://${1}/api/health
+      - target_label: __address__
+        replacement: 127.0.0.1:9115
+{% endfor %}

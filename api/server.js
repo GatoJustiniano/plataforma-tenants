@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const express = require('express');
 const { db, TIPOS_OPERACION, ahora } = require('../comun/db');
 const { leerCatalogo, obtenerPlan } = require('../comun/catalogo');
+const { monitoreo } = require('./grafana');
 
 const PORT = Number(process.env.PORT) || 4000;
 const ADMIN_KEY = process.env.PLATAFORMA_ADMIN_KEY || '';
@@ -182,6 +183,15 @@ app.post('/api/operaciones/:id/reintentar', (req, res) => {
 });
 
 // ---------- Frontend ----------
+// ---------- Monitoreo: reglas y alertas de Grafana (RF-29) ----------
+app.get('/api/monitoreo', async (req, res) => {
+  const datos = await monitoreo();
+  const tenant = String(req.query.tenant || '');
+  if (!tenant || !datos.reglas) return res.json(datos);
+  // Solo las alertas de un tenant (vista de detalle)
+  res.json({ ...datos, reglas: datos.reglas.map((r) => ({ ...r, alertas: r.alertas.filter((a) => a.tenant === tenant) })) });
+});
+
 app.use(express.static(path.resolve(__dirname, '..', 'frontend')));
 
 app.use((e, req, res, next) => {

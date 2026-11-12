@@ -6,7 +6,7 @@ Terraform de la propia plataforma. Se aplica **una vez por cuenta**, antes de cr
 |---|---|---|
 | `bootstrap/` | Bucket S3 `asistencia-iac-estado-<cuenta>`: versionado, cifrado AES256, sin acceso público, solo TLS | Local (`bootstrap/terraform.tfstate`, fuera de git) |
 | `red/` | VPC compartida `10.20.0.0/16`, 2 subredes públicas, IGW y el SG de la plataforma | S3: `plataforma/red.tfstate` |
-| `plataforma/` (pendiente) | EC2 del portal con worker, Prometheus y Grafana, y el rol IAM del worker | S3: `plataforma/portal.tfstate` |
+| `plataforma/` | EC2 de la plataforma (t3.small, IP elástica) con Prometheus, blackbox_exporter y Grafana instalados por Ansible; rol IAM, contraseña de Grafana en SSM. Más adelante, también el portal y el worker. | S3: `plataforma/portal.tfstate` |
 
 ## Orden
 
@@ -21,6 +21,18 @@ cd infra/bootstrap && terraform init && terraform apply
 ```bash
 cd ../red && terraform init && terraform apply
 ```
+
+`plataforma/` necesita las IPs desde las que se abrirá Grafana, en un `terraform.tfvars` que no se sube a git:
+
+```bash
+cd ../plataforma && echo 'cidrs_admin = ["'$(curl -s https://checkip.amazonaws.com)'/32"]' > terraform.tfvars
+```
+
+```bash
+terraform init && terraform apply
+```
+
+La instancia tarda unos 5 minutos en quedar lista (Ansible instala todo en el primer arranque). Ver [ansible/README.md](../ansible/README.md) y [docs/monitoreo.md](../docs/monitoreo.md).
 
 ## Cómo se guarda y protege el estado
 

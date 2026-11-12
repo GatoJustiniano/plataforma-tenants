@@ -1,0 +1,32 @@
+#cloud-config
+# Primer arranque de la EC2 de la plataforma: instala Ansible y ejecuta el playbook
+# que está en S3. No contiene secretos: el playbook los lee de SSM con el rol de la instancia.
+# Nota: en las plantillas de Terraform, "$${...}" es una variable de shell.
+packages:
+  - python3-pip
+  - unzip
+
+write_files:
+  - path: /usr/local/bin/aplicar-ansible.sh
+    permissions: "0700"
+    content: |
+      #!/bin/bash
+      # Descarga el playbook de S3 y lo aplica en esta misma máquina.
+      # Lo ejecutan cloud-init (primer arranque) y la asociación de SSM (cambios posteriores).
+      set -euo pipefail
+      exec 9>/run/aplicar-ansible.lock
+      flock 9 # cloud-init y SSM pueden lanzarlo a la vez en el primer arranque: uno espera al otro
+      exec > >(tee -a /var/log/ansible-plataforma.log) 2>&1
+      echo "==> $(date -Is) aplicando playbook"
+      export PATH=/usr/local/bin:$PATH
+      command -v ansible-playbook >/dev/null || pip3 install --quiet "ansible-core~=2.15.0"
+      DIR=$(mktemp -d)
+      trap 'rm -rf "$DIR"' EXIT
+      aws s3 cp --only-show-errors "s3://${Bucket}/${Archivo}" "$DIR/ansible.zip" --region "${Region}"
+      aws s3 cp --only-show-errors "s3://${Bucket}/${Vars}" "$DIR/vars.json" --region "${Region}"
+      unzip -q "$DIR/ansible.zip" -d "$DIR/ansible"
+      cd "$DIR/ansible"
+      ANSIBLE_FORCE_COLOR=0 ansible-playbook -i localhost, -c local plataforma.yml -e @"$DIR/vars.json"
+
+runcmd:
+  - /usr/local/bin/aplicar-ansible.sh

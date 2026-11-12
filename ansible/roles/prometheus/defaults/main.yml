@@ -1,0 +1,7 @@
+prometheus_version: "3.5.0"
+prometheus_base_url: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}"
+retencion_dias: 15
+# Los dan vars.json (Terraform); estos valores solo sirven para probar el rol por separado
+region: us-east-1
+intervalos_planes:
+  basico: 60

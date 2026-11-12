@@ -1,0 +1,2 @@
+blackbox_version: "0.27.0"
+blackbox_base_url: "https://github.com/prometheus/blackbox_exporter/releases/download/v{{ blackbox_version }}"

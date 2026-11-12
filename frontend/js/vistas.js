@@ -251,6 +251,7 @@ const Vistas = {
         <div><span>Creado</span>${fecha(t.creado_en)} <small class="muted">por ${esc(t.creado_por)}</small></div>
         <div><span>Actualizado</span>${fecha(t.actualizado_en)}</div>
       </div>
+      <div class="tarjeta" id="alertas-tenant" style="margin-top:16px" hidden></div>
       <div class="grid" style="grid-template-columns:minmax(0,5fr) minmax(0,7fr);margin-top:16px;align-items:start">
         <div class="tarjeta"><h2>Historial de operaciones</h2>${tablaOperaciones(t.operaciones, { seleccion: opSel, tenantId: t.id })}</div>
         <div class="tarjeta" id="panel-op">${opSel ? '<p class="muted">Cargando operación…</p>' : '<div class="vacio">Sin operaciones</div>'}</div>
@@ -273,6 +274,7 @@ const Vistas = {
       } catch (e) { avisar(e.message, 'mal'); b.disabled = false; }
     }));
 
+    pintarAlertasTenant(t);
     if (!opSel) return null;
     return panelOperacion(opSel, t);
   },
@@ -310,12 +312,36 @@ const Vistas = {
 
   // ---------------------------------------------------------------- Monitoreo
   async monitoreo() {
-    V().innerHTML = `
-      <div class="cabecera"><div><h1>Monitoreo</h1><p class="muted">Salud, métricas y alertas por tenant y entorno.</p></div></div>
-      <div class="tarjeta"><div class="vacio">
-        <h2>Grafana se integra en la siguiente etapa</h2>
-        <p>Aquí se mostrarán el panel de Grafana por tenant y las alertas recientes (RF-25 a RF-29).</p>
-      </div></div>`;
+    const pintar = async () => {
+      const m = await api('/monitoreo');
+      if (!m.configurado) {
+        V().innerHTML = `${cabeceraMonitoreo()}<div class="tarjeta"><div class="vacio"><h2>Grafana no está configurado</h2>
+          <p>Aplica <code>infra/plataforma</code> y pon su <code>grafana_url</code> en <code>GRAFANA_URL</code> del <code>.env</code> de la plataforma.</p></div></div>`;
+        return;
+      }
+      const reglas = m.reglas || [];
+      const alertas = reglas.flatMap((r) => r.alertas.map((a) => ({ ...a, regla: r.titulo, severidad: r.severidad })));
+      const disparadas = alertas.filter((a) => a.estado === 'firing');
+      V().innerHTML = `
+        ${cabeceraMonitoreo(m)}
+        ${m.error ? `<div class="nota mal" style="margin-bottom:16px">${esc(m.error)}</div>` : ''}
+        <div class="grid g4">
+          ${[['Alertas activas', disparadas.length], ['En observación', alertas.length - disparadas.length],
+            ['Tenants con alertas', new Set(disparadas.map((a) => a.tenant)).size], ['Reglas', reglas.length]]
+            .map(([t, n]) => `<div class="tarjeta kpi"><strong>${n}</strong><span>${t}</span></div>`).join('')}
+        </div>
+        <div class="tarjeta" style="margin-top:16px"><h2>Alertas</h2>${tablaAlertas(alertas, m, true)}</div>
+        <div class="tarjeta"><h2>Reglas de alerta</h2>
+          <p class="muted"><small>Umbrales tomados de <code>catalogo/planes.json</code>. Se evalúan cada minuto sobre todos los tenants encendidos.</small></p>
+          <table><thead><tr><th>Regla</th><th>Severidad</th><th>Estado</th><th>Tenants afectados</th></tr></thead><tbody>
+          ${reglas.map((r) => `<tr><td>${esc(r.titulo)}</td><td>${badgeSeveridad(r.severidad)}</td><td>${badgeRegla(r)}</td>
+            <td>${r.alertas.length ? r.alertas.map((a) => `<a href="#/tenants/${esc(a.tenant)}">${esc(a.tenant)}</a>`).join(', ') : '<span class="muted">—</span>'}</td></tr>`).join('')}
+          </tbody></table>
+          ${m.actualizado ? `<p class="muted"><small>Consultado a Grafana: ${fecha(m.actualizado)}</small></p>` : ''}</div>`;
+    };
+    await pintar();
+    const t = setInterval(() => pintar().catch(() => {}), 30000);
+    return () => clearInterval(t);
   },
 
   // ---------------------------------------------------------------- Auditoría
@@ -375,6 +401,51 @@ function pintarLog(texto) {
 }
 
 // Panel de una operación con sondeo del progreso y del log (RF-11)
+// ---------- Monitoreo ----------
+const TEXTO_SEVERIDAD = { critica: ['Crítica', 'mal'], alta: ['Alta', 'mal'], media: ['Media', 'alerta'], baja: ['Baja', ''] };
+const badgeSeveridad = (s) => { const [t, c] = TEXTO_SEVERIDAD[s] || [s || '—', '']; return `<span class="badge ${c}">${esc(t)}</span>`; };
+function badgeRegla(r) {
+  if (r.salud === 'error') return '<span class="badge mal">error</span>';
+  if (r.estado === 'firing') return '<span class="badge mal">disparada</span>';
+  if (r.estado === 'pending') return '<span class="badge alerta">en observación</span>';
+  return '<span class="badge ok">normal</span>';
+}
+const urlDashboard = (m, tenant) => `${m.dashboard_url}${tenant ? `?var-tenant=${encodeURIComponent(tenant)}` : ''}`;
+
+function cabeceraMonitoreo(m) {
+  return `<div class="cabecera"><div><h1>Monitoreo</h1>
+    <p class="muted">Disponibilidad, recursos, errores y uso del plan de cada tenant. Prometheus mide, Grafana muestra y alerta.</p></div>
+    ${m?.dashboard_url ? `<a class="boton primario" href="${esc(m.dashboard_url)}" target="_blank" rel="noopener">Abrir Grafana ↗</a>` : ''}</div>`;
+}
+
+function tablaAlertas(alertas, m, conTenant) {
+  if (!alertas.length) return '<div class="vacio">Sin alertas: todos los tenants encendidos están dentro de los umbrales.</div>';
+  return `<table><thead><tr>${conTenant ? '<th>Tenant</th>' : ''}<th>Alerta</th><th>Severidad</th><th>Estado</th><th>Desde</th><th>Detalle</th></tr></thead><tbody>
+    ${alertas.map((a) => `<tr>
+      ${conTenant ? `<td><a href="#/tenants/${esc(a.tenant)}">${esc(a.tenant)}</a><br><small class="muted">${esc(ENTORNOS[a.entorno] || a.entorno)} · ${esc(a.plan)}</small></td>` : ''}
+      <td>${esc(a.regla)}</td><td>${badgeSeveridad(a.severidad)}</td>
+      <td>${a.estado === 'firing' ? '<span class="badge mal">disparada</span>' : '<span class="badge alerta">en observación</span>'}</td>
+      <td>${fecha(a.desde)}</td>
+      <td>${esc(a.resumen)} <a href="${esc(urlDashboard(m, a.tenant))}" target="_blank" rel="noopener">Ver ↗</a></td></tr>`).join('')}
+  </tbody></table>`;
+}
+
+// Tarjeta del detalle: alertas del tenant y enlace a su panel de Grafana. Si Grafana no
+// está configurado o no responde, la tarjeta no aparece (no bloquea el resto de la vista).
+async function pintarAlertasTenant(t) {
+  let m;
+  try { m = await api(`/monitoreo?tenant=${encodeURIComponent(t.id)}`); } catch { return; }
+  const el = document.getElementById('alertas-tenant');
+  if (!el || !m.configurado) return;
+  const alertas = (m.reglas || []).flatMap((r) => r.alertas.map((a) => ({ ...a, regla: r.titulo, severidad: r.severidad })));
+  el.hidden = false;
+  el.innerHTML = `<div class="cabecera" style="margin-bottom:8px"><h2>Monitoreo</h2>
+      <a class="boton chico" href="${esc(urlDashboard(m, t.id))}" target="_blank" rel="noopener">Panel en Grafana ↗</a></div>
+    ${m.error ? `<div class="nota mal">${esc(m.error)}</div>`
+      : t.estado !== 'activo' ? '<p class="muted">El tenant no está encendido: no se mide ni genera alertas.</p>'
+      : tablaAlertas(alertas, m, false)}`;
+}
+
 function panelOperacion(opId, tenant) {
   let largo = 0; let timer = null; let vivo = true; let estadoPrevio = null;
   const panel = () => document.getElementById('panel-op');

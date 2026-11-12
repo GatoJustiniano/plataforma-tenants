@@ -18,8 +18,8 @@ comun/      BD de la plataforma (SQLite integrado en Node), catálogo y saneo de
 frontend/   Panel de administración: Tenants, Planes, Monitoreo, Auditoría
 api/        API REST: tenants, planes, operaciones; encola los trabajos
 worker/     Ejecuta las operaciones: copia/clona asistencia-infra y corre el motor elegido
-infra/      Terraform de la propia plataforma: VPC compartida, EC2 del portal, bucket S3 del estado, roles IAM
-grafana/    Provisioning de Prometheus y Grafana: datasources, paneles y alertas como código
+infra/      Terraform de la propia plataforma: bucket S3 del estado, VPC compartida, EC2 de la plataforma
+ansible/    Playbook de la EC2 de la plataforma: Prometheus, blackbox_exporter y Grafana (paneles y alertas como código)
 docs/       Arquitectura, catálogo de planes, instrucciones de operación y evidencias
 ```
 
@@ -61,15 +61,19 @@ La API **no ejecuta** infraestructura: registra la operación y responde `202`. 
 | `POST /api/operaciones/:id/cancelar` | Cancela la eliminación |
 | `GET /api/operaciones/:id?desde=N` | Paso actual, error comprensible y log saneado (RF-11) |
 | `POST /api/operaciones/:id/reintentar` | Reintenta una operación fallida sobre el mismo estado, sin duplicar recursos (RF-12) |
+| `GET /api/monitoreo?tenant=` | Reglas de alerta de Grafana y alertas activas por tenant (RF-29) |
 
 Autenticación: si `PLATAFORMA_ADMIN_KEY` tiene valor, cada llamada debe enviar la cabecera `X-Admin-Key`. La cabecera `X-Usuario` queda registrada como quién pidió la operación.
 
-Cada operación guarda en `versiones` lo que usó: la versión de la app, el origen y commit de las plantillas (y si tenían cambios sin commit) y la versión del motor y de los providers (RF-13).
+Cada operación guarda en `versiones` lo que usó: la versión de la app, el origen y commit de las plantillas (y si tenían cambios sin commit), la versión del motor y de los providers, y la AMI de Packer (RF-13).
+
+Para ver las alertas en el panel, `GRAFANA_URL` del `.env` debe apuntar al Grafana de `infra/plataforma`. El token de solo lectura se lee de SSM.
 
 ## Documentación
 
 - [Arquitectura y flujo de creación de un tenant](docs/arquitectura.md)
 - [Catálogo de planes y límites](docs/planes.md)
+- [Monitoreo y alertas](docs/monitoreo.md)
 
 ## Alcance de la demo
 

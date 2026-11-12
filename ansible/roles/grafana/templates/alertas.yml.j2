@@ -1,0 +1,87 @@
+# Generado por Ansible (rol grafana). Umbrales: comunes.alertas de catalogo/planes.json.
+# Cada regla evalúa todos los tenants y dispara una alerta por tenant (etiquetas tenant, entorno, plan).
+# Un tenant suspendido no tiene series: queda en "sin datos" = OK y no alerta.
+{% set reglas = [
+  {
+    'uid': 'asist-servicio-caido', 'titulo': 'Servicio caído', 'severidad': 'critica',
+    'expr': 'probe_success{job="disponibilidad"}',
+    'op': 'lt', 'umbral': 1, 'for': alertas.servicio_caido_min ~ 'm',
+    'resumen': 'La app del tenant {{ $labels.tenant }} no responde en /api/health',
+  },
+  {
+    'uid': 'asist-bd-caida', 'titulo': 'Base de datos sin respuesta', 'severidad': 'critica',
+    'expr': 'asistencia_db_up{job="app"}',
+    'op': 'lt', 'umbral': 1, 'for': '2m',
+    'resumen': 'La base SQLite del tenant {{ $labels.tenant }} no responde',
+  },
+  {
+    'uid': 'asist-errores-5xx', 'titulo': 'Errores 5xx', 'severidad': 'alta',
+    'expr': 'sum by (tenant, entorno, plan) (increase(http_requests_total{job="app", codigo=~"5.."}[1m]))',
+    'op': 'gt', 'umbral': alertas.errores_5xx_por_min, 'for': '1m',
+    'resumen': 'El tenant {{ $labels.tenant }} tiene {{ $values.A }} errores 5xx por minuto',
+  },
+  {
+    'uid': 'asist-cpu', 'titulo': 'CPU alta', 'severidad': 'media',
+    'expr': '100 * (1 - avg by (tenant, entorno, plan) (rate(node_cpu_seconds_total{job="node", mode="idle"}[5m])))',
+    'op': 'gt', 'umbral': alertas.cpu_porcentaje, 'for': '5m',
+    'resumen': 'CPU del tenant {{ $labels.tenant }} al {{ humanize $values.A.Value }}%',
+  },
+  {
+    'uid': 'asist-memoria', 'titulo': 'Memoria alta', 'severidad': 'media',
+    'expr': '100 * (1 - node_memory_MemAvailable_bytes{job="node"} / node_memory_MemTotal_bytes{job="node"})',
+    'op': 'gt', 'umbral': alertas.memoria_porcentaje, 'for': '5m',
+    'resumen': 'Memoria del tenant {{ $labels.tenant }} al {{ humanize $values.A.Value }}%',
+  },
+  {
+    'uid': 'asist-disco-datos', 'titulo': 'Disco de datos casi lleno', 'severidad': 'alta',
+    'expr': '100 * (1 - node_filesystem_avail_bytes{job="node", mountpoint="/var/lib/asistencia"} / node_filesystem_size_bytes{job="node", mountpoint="/var/lib/asistencia"})',
+    'op': 'gt', 'umbral': alertas.disco_datos_porcentaje, 'for': '5m',
+    'resumen': 'El volumen de datos del tenant {{ $labels.tenant }} está al {{ humanize $values.A.Value }}%',
+  },
+  {
+    'uid': 'asist-limite-estudiantes', 'titulo': 'Cerca del límite de estudiantes del plan', 'severidad': 'baja',
+    'expr': '100 * asistencia_estudiantes{job="app"} / ignoring(recurso) asistencia_limite{job="app", recurso="estudiantes"}',
+    'op': 'gt', 'umbral': alertas.estudiantes_porcentaje_limite, 'for': '0s',
+    'resumen': 'El tenant {{ $labels.tenant }} usa el {{ humanize $values.A.Value }}% de los estudiantes de su plan',
+  },
+] %}
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: tenants
+    folder: Asistencia
+    interval: 1m
+    rules:
+{% for r in reglas %}
+      - uid: {{ r.uid }}
+        title: {{ r.titulo | to_json }}
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 600
+              to: 0
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: {{ r.expr | to_json }}
+              instant: true
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: {{ r.op }}
+                    params: [{{ r.umbral }}]
+        noDataState: OK
+        execErrState: Error
+        for: {{ r.for }}
+        isPaused: false
+        labels:
+          severidad: {{ r.severidad }}
+        annotations:
+          summary: {{ r.resumen | to_json }}
+{% endfor %}
