@@ -137,7 +137,9 @@
             "uid": "prometheus"
           },
           "expr": "probe_success{job=\"disponibilidad\",tenant=~\"$tenant\"}",
-          "legendFormat": "{{tenant}}"
+          "legendFormat": "{{tenant}}",
+          "instant": true,
+          "range": false
         }
       ],
       "fieldConfig": {
@@ -210,7 +212,9 @@
             "uid": "prometheus"
           },
           "expr": "100 * asistencia_estudiantes{job=\"app\",tenant=~\"$tenant\"} / ignoring(recurso) asistencia_limite{job=\"app\",recurso=\"estudiantes\",tenant=~\"$tenant\"}",
-          "legendFormat": "{{tenant}}"
+          "legendFormat": "{{tenant}}",
+          "instant": true,
+          "range": false
         }
       ],
       "fieldConfig": {

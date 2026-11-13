@@ -43,6 +43,8 @@ Dashboard `Tenants del Sistema de Asistencia` (uid `asistencia-tenants`, carpeta
 - Recursos: CPU, memoria y disco de datos.
 - Aplicación: peticiones por segundo, errores 5xx por minuto, latencia p95, tiempo de respuesta de `/api/health` y estado de la base de datos.
 
+Los paneles de **Estado** usan consultas instantáneas: solo muestran los tenants que se midieron en los últimos 5 minutos. Un tenant suspendido o eliminado desaparece de ellos, pero sigue en las gráficas de tiempo (y en el filtro *Tenant*) mientras su historial esté dentro del rango elegido.
+
 El dashboard es código (`ansible/roles/grafana/files/tenants.json`) y no se puede editar desde la interfaz: los cambios se hacen en el repo y se aplican con Ansible.
 
 ## Alertas (RF-28)
