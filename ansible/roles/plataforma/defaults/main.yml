@@ -1,0 +1,18 @@
+# Versiones fijas: los binarios se descargan de su sitio oficial y se verifica el sha256 publicado.
+node_version: "22.23.5"
+terraform_version: "1.16.6"
+opentofu_version: "1.13.9"
+
+# Código de la plataforma (este repositorio) y de las plantillas de los tenants
+plataforma_repo: https://github.com/GatoJustiniano/plataforma-tenants.git
+plataforma_ref: main
+infra_repo: https://github.com/GatoJustiniano/asistencia-infra.git
+infra_ref: main
+app_version: main
+
+plataforma_dir: /opt/plataforma          # código: de root, solo lectura para el servicio
+plataforma_datos: /var/lib/plataforma    # BD, carpetas de trabajo y caché de providers
+plataforma_puerto: 80
+
+# t3.small tiene 2 GB: Prometheus + Grafana + un terraform apply pueden pasar de ahí
+swap_mb: 2048

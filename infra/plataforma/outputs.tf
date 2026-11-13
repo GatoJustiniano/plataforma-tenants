@@ -1,3 +1,18 @@
+output "portal_url" {
+  description = "Portal de la plataforma (pide la clave de administrador de ssm_admin_key)"
+  value       = "http://${aws_eip.plataforma.public_ip}"
+}
+
+output "ssm_admin_key" {
+  description = "Clave de administrador del portal (SecureString)"
+  value       = aws_ssm_parameter.admin_key.name
+}
+
+output "limite_tenant_arn" {
+  description = "Permissions boundary que deben llevar los roles de los tenants"
+  value       = aws_iam_policy.limite_tenant.arn
+}
+
 output "grafana_url" {
   value = "http://${aws_eip.plataforma.public_ip}:3000"
 }

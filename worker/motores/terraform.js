@@ -2,7 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const CACHE = path.resolve(__dirname, '..', '.cache', 'plugins');
+const CACHE = process.env.PLUGIN_CACHE_DIR ? path.resolve(process.env.PLUGIN_CACHE_DIR) : path.resolve(__dirname, '..', '.cache', 'plugins');
 
 function crearMotor(nombre) {
   const bin = nombre === 'opentofu' ? (process.env.TOFU_BIN || 'tofu') : (process.env.TERRAFORM_BIN || 'terraform');

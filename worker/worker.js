@@ -10,7 +10,8 @@ const { prepararPlantillas } = require('./plantillas');
 const { mensajeError } = require('./errores');
 const { crearMotor } = require('./motores/terraform');
 
-const TRABAJOS = path.resolve(__dirname, 'trabajos');
+// En la EC2 el código es de solo lectura: las carpetas de trabajo van en TRABAJOS_DIR (/var/lib/plataforma)
+const TRABAJOS = process.env.TRABAJOS_DIR ? path.resolve(process.env.TRABAJOS_DIR) : path.resolve(__dirname, 'trabajos');
 const INTERVALO_MS = 2000;
 const HEALTH_TIMEOUT_S = Number(process.env.HEALTH_TIMEOUT_S) || 600;
 

@@ -1,5 +1,6 @@
-# EC2 de la plataforma (plano de control). Por ahora aloja el monitoreo: Prometheus,
-# blackbox_exporter y Grafana, instalados con Ansible. Más adelante también el portal y el worker.
+# EC2 de la plataforma (plano de control): portal, API y worker (que crea los tenants con el
+# rol IAM de la instancia) y el monitoreo (Prometheus, blackbox_exporter y Grafana). Todo lo
+# instala Ansible.
 #
 # Ansible no puede ejecutarse como nodo de control en Windows, así que el playbook viaja
 # empaquetado a S3 y la propia instancia lo ejecuta en modo local (ansible-playbook -c local).
@@ -53,7 +54,12 @@ locals {
     alertas           = local.catalogo.comunes.alertas
     intervalos_planes = { for p in local.catalogo.planes : p.id => p.monitoreo.intervalo_metricas_s }
     retencion_dias    = var.retencion_metricas_dias
+    plataforma_ref    = var.plataforma_ref
+    infra_ref         = var.infra_ref
+    app_version       = var.app_version
   }
+  estado_tenants = "arn:aws:s3:::${local.bucket}/tenants/*"
+  limite_tenant  = "asistencia-limite-tenant" # permissions boundary de los roles de los tenants
 }
 
 # ---------- Red compartida (infra/red) ----------
@@ -86,7 +92,31 @@ resource "aws_vpc_security_group_ingress_rule" "grafana" {
   cidr_ipv4         = each.value
 }
 
+# El portal (API y panel, puerto 80) también; además pide la clave de administrador
+resource "aws_vpc_security_group_ingress_rule" "portal" {
+  for_each          = toset(var.cidrs_admin)
+  security_group_id = data.aws_security_group.plataforma.id
+  description       = "Portal de la plataforma desde administracion"
+  ip_protocol       = "tcp"
+  from_port         = 80
+  to_port           = 80
+  cidr_ipv4         = each.value
+}
+
 # ---------- Secretos ----------
+
+# Clave de administrador del portal (cabecera X-Admin-Key). Ansible la pasa a la API.
+resource "random_password" "admin_key" {
+  length  = 32
+  special = false
+}
+
+resource "aws_ssm_parameter" "admin_key" {
+  name        = "${local.ssm_prefijo}/admin-key"
+  description = "Clave de administrador del portal de la plataforma"
+  type        = "SecureString"
+  value       = random_password.admin_key.result
+}
 
 resource "random_password" "grafana_admin" {
   length  = 24
@@ -161,6 +191,170 @@ resource "aws_iam_role_policy" "plataforma" {
         Sid      = "SecretosPlataforma"
         Effect   = "Allow"
         Action   = ["ssm:GetParameter", "ssm:PutParameter"]
+        Resource = "arn:aws:ssm:${var.region}:${var.aws_account_id}:parameter${local.ssm_prefijo}/*"
+      },
+    ]
+  })
+}
+
+# ---------- IAM del worker: crea y elimina tenants ----------
+# Solo lo que usa el módulo tenant de asistencia-infra. Lo destructivo exige el tag
+# Componente=tenant: el worker no puede tocar la plataforma ni otros recursos de la cuenta.
+
+resource "aws_iam_role_policy" "worker" {
+  name = "worker-tenants"
+  role = aws_iam_role.plataforma.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "EstadoTerraform"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+        Resource = local.estado_tenants
+      },
+      {
+        Sid       = "ListarEstado"
+        Effect    = "Allow"
+        Action    = "s3:ListBucket"
+        Resource  = "arn:aws:s3:::${local.bucket}"
+        Condition = { StringLike = { "s3:prefix" = ["tenants/*"] } }
+      },
+      {
+        Sid      = "LeerEc2"
+        Effect   = "Allow"
+        Action   = ["ec2:Describe*", "ec2:GetEbsEncryptionByDefault"]
+        Resource = "*"
+      },
+      {
+        Sid    = "CrearRecursosTenant"
+        Effect = "Allow"
+        Action = ["ec2:RunInstances", "ec2:CreateVolume", "ec2:CreateSecurityGroup",
+          "ec2:AuthorizeSecurityGroupIngress", "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress", "ec2:RevokeSecurityGroupEgress", "ec2:ModifySecurityGroupRules"]
+        Resource = "*"
+      },
+      {
+        Sid       = "EtiquetarAlCrear"
+        Effect    = "Allow"
+        Action    = "ec2:CreateTags"
+        Resource  = "*"
+        Condition = { StringEquals = { "ec2:CreateAction" = ["RunInstances", "CreateVolume", "CreateSecurityGroup", "AuthorizeSecurityGroupIngress", "AuthorizeSecurityGroupEgress"] } }
+      },
+      {
+        Sid    = "ModificarSoloTenants"
+        Effect = "Allow"
+        Action = ["ec2:CreateTags", "ec2:DeleteTags", "ec2:TerminateInstances", "ec2:StopInstances",
+          "ec2:StartInstances", "ec2:ModifyInstanceAttribute", "ec2:ModifyInstanceMetadataOptions",
+          "ec2:ModifyInstanceCreditSpecification", "ec2:AttachVolume", "ec2:DetachVolume",
+        "ec2:DeleteVolume", "ec2:ModifyVolume", "ec2:DeleteSecurityGroup"]
+        Resource  = "*"
+        Condition = { StringEquals = { "aws:ResourceTag/Componente" = "tenant" } }
+      },
+      {
+        Sid    = "SecretosTenants"
+        Effect = "Allow"
+        Action = ["ssm:PutParameter", "ssm:DeleteParameter", "ssm:GetParameter", "ssm:GetParameters",
+        "ssm:AddTagsToResource", "ssm:RemoveTagsFromResource", "ssm:ListTagsForResource"]
+        Resource = "arn:aws:ssm:${var.region}:${var.aws_account_id}:parameter/asistencia/*"
+      },
+      {
+        Sid      = "DescribirParametros"
+        Effect   = "Allow"
+        Action   = "ssm:DescribeParameters"
+        Resource = "*"
+      },
+      {
+        # Los roles de los tenants solo se crean y cambian con el límite asistencia-limite-tenant
+        Sid    = "RolesTenantsConLimite"
+        Effect = "Allow"
+        Action = ["iam:CreateRole", "iam:PutRolePolicy", "iam:DeleteRolePolicy",
+        "iam:AttachRolePolicy", "iam:DetachRolePolicy"]
+        Resource  = "arn:aws:iam::${var.aws_account_id}:role/asistencia-*"
+        Condition = { StringEquals = { "iam:PermissionsBoundary" = aws_iam_policy.limite_tenant.arn } }
+      },
+      {
+        Sid    = "GestionarRolesTenants"
+        Effect = "Allow"
+        Action = ["iam:GetRole", "iam:DeleteRole", "iam:TagRole", "iam:UntagRole", "iam:UpdateRole",
+          "iam:UpdateAssumeRolePolicy", "iam:GetRolePolicy", "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies", "iam:ListInstanceProfilesForRole"]
+        Resource = "arn:aws:iam::${var.aws_account_id}:role/asistencia-*"
+      },
+      {
+        Sid    = "PerfilesTenants"
+        Effect = "Allow"
+        Action = ["iam:CreateInstanceProfile", "iam:DeleteInstanceProfile", "iam:GetInstanceProfile",
+          "iam:AddRoleToInstanceProfile", "iam:RemoveRoleFromInstanceProfile", "iam:TagInstanceProfile",
+        "iam:UntagInstanceProfile"]
+        Resource = "arn:aws:iam::${var.aws_account_id}:instance-profile/asistencia-*"
+      },
+      {
+        Sid       = "PasarRolATenant"
+        Effect    = "Allow"
+        Action    = "iam:PassRole"
+        Resource  = "arn:aws:iam::${var.aws_account_id}:role/asistencia-*"
+        Condition = { StringEquals = { "iam:PassedToService" = "ec2.amazonaws.com" } }
+      },
+      {
+        # Nada de lo anterior aplica a la propia plataforma: ni a su rol ni a su perfil
+        Sid    = "ProtegerPlataforma"
+        Effect = "Deny"
+        Action = ["iam:*"]
+        Resource = ["arn:aws:iam::${var.aws_account_id}:role/${local.prefijo}-*",
+        "arn:aws:iam::${var.aws_account_id}:instance-profile/${local.prefijo}-*"]
+      },
+      {
+        Sid      = "ProtegerSecretosPlataforma"
+        Effect   = "Deny"
+        Action   = ["ssm:DeleteParameter", "ssm:DeleteParameters"]
+        Resource = "arn:aws:ssm:${var.region}:${var.aws_account_id}:parameter${local.ssm_prefijo}/*"
+      },
+      {
+        Sid      = "SinQuitarLimite"
+        Effect   = "Deny"
+        Action   = ["iam:DeleteRolePermissionsBoundary", "iam:PutRolePermissionsBoundary", "iam:CreatePolicyVersion", "iam:DeletePolicy"]
+        Resource = "*"
+      },
+    ]
+  })
+}
+
+# Techo de permisos de los roles de los tenants: aunque alguien escribiera otra política en
+# un rol de tenant, este no podría hacer más que registrarse en SSM y leer secretos de tenants.
+resource "aws_iam_policy" "limite_tenant" {
+  name        = local.limite_tenant
+  description = "Permissions boundary de los roles de los tenants de asistencia"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "AgenteSsm" # lo que usa AmazonSSMManagedInstanceCore
+        Effect = "Allow"
+        Action = ["ssm:UpdateInstanceInformation", "ssm:ListAssociations", "ssm:ListInstanceAssociations",
+          "ssm:DescribeAssociation", "ssm:GetDocument", "ssm:DescribeDocument", "ssm:UpdateAssociationStatus",
+          "ssm:UpdateInstanceAssociationStatus", "ssm:PutInventory", "ssm:PutComplianceItems",
+          "ssm:PutConfigurePackageResult", "ssm:GetDeployablePatchSnapshotForInstance", "ssm:GetManifest",
+        "ssmmessages:*", "ec2messages:*", "s3:GetEncryptionConfiguration"]
+        Resource = "*"
+      },
+      {
+        Sid      = "SecretosTenants"
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"]
+        Resource = "arn:aws:ssm:${var.region}:${var.aws_account_id}:parameter/asistencia/*"
+      },
+      {
+        Sid       = "DescifrarSecretos"
+        Effect    = "Allow"
+        Action    = "kms:Decrypt"
+        Resource  = "*"
+        Condition = { StringEquals = { "kms:ViaService" = "ssm.${var.region}.amazonaws.com" } }
+      },
+      {
+        Sid      = "NuncaSecretosPlataforma"
+        Effect   = "Deny"
+        Action   = "ssm:*"
         Resource = "arn:aws:ssm:${var.region}:${var.aws_account_id}:parameter${local.ssm_prefijo}/*"
       },
     ]

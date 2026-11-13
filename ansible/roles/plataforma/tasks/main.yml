@@ -1,0 +1,205 @@
+# Portal, API y worker de la plataforma en esta misma EC2.
+# El worker usa el rol IAM de la instancia: no hay perfiles ni claves de AWS en la máquina.
+
+# ---------- Sistema ----------
+
+- name: Swap (Prometheus + Grafana + terraform apply en 2 GB)
+  ansible.builtin.shell: |
+    set -e
+    dd if=/dev/zero of=/swapfile bs=1M count={{ swap_mb }} status=none
+    chmod 600 /swapfile
+    mkswap /swapfile
+    swapon /swapfile
+  args:
+    creates: /swapfile
+  when: swap_mb | int > 0
+
+- name: Swap en el arranque
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    line: /swapfile none swap sw 0 0
+  when: swap_mb | int > 0
+
+- name: Paquetes (git para clonar el código y las plantillas)
+  ansible.builtin.dnf:
+    name: [git, unzip, tar, xz]
+    state: present
+
+- name: Usuario del servicio
+  ansible.builtin.user:
+    name: plataforma
+    system: true
+    shell: /sbin/nologin
+    home: "{{ plataforma_datos }}"
+    create_home: false
+
+- name: Carpetas de datos (BD, operaciones, caché de providers)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: plataforma
+    group: plataforma
+    mode: "0750"
+  loop:
+    - "{{ plataforma_datos }}"
+    - "{{ plataforma_datos }}/trabajos"
+    - "{{ plataforma_datos }}/plugins"
+
+- name: Carpeta de configuración
+  ansible.builtin.file:
+    path: /etc/plataforma
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+# ---------- Node.js 22 (node:sqlite) ----------
+
+- name: Descargar Node.js (verifica el sha256 publicado)
+  ansible.builtin.get_url:
+    url: "https://nodejs.org/dist/v{{ node_version }}/node-v{{ node_version }}-linux-x64.tar.xz"
+    dest: "/opt/node-v{{ node_version }}.tar.xz"
+    checksum: "sha256:https://nodejs.org/dist/v{{ node_version }}/SHASUMS256.txt"
+    mode: "0644"
+
+- name: Descomprimir Node.js
+  ansible.builtin.unarchive:
+    src: "/opt/node-v{{ node_version }}.tar.xz"
+    dest: /opt
+    remote_src: true
+    creates: "/opt/node-v{{ node_version }}-linux-x64/bin/node"
+
+- name: Enlazar node y npm
+  ansible.builtin.file:
+    src: "/opt/node-v{{ node_version }}-linux-x64/bin/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    state: link
+    force: true
+  loop: [node, npm, npx]
+  notify: Reiniciar plataforma
+
+# ---------- Motores de IaC ----------
+
+- name: Descargar Terraform y OpenTofu (verifica el sha256 publicado)
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    dest: "/opt/{{ item.bin }}-{{ item.version }}.zip"
+    checksum: "sha256:{{ item.sumas }}"
+    mode: "0644"
+  loop: &motores
+    - bin: terraform
+      version: "{{ terraform_version }}"
+      url: "https://releases.hashicorp.com/terraform/{{ terraform_version }}/terraform_{{ terraform_version }}_linux_amd64.zip"
+      sumas: "https://releases.hashicorp.com/terraform/{{ terraform_version }}/terraform_{{ terraform_version }}_SHA256SUMS"
+    - bin: tofu
+      version: "{{ opentofu_version }}"
+      url: "https://github.com/opentofu/opentofu/releases/download/v{{ opentofu_version }}/tofu_{{ opentofu_version }}_linux_amd64.zip"
+      sumas: "https://github.com/opentofu/opentofu/releases/download/v{{ opentofu_version }}/tofu_{{ opentofu_version }}_SHA256SUMS"
+  loop_control:
+    label: "{{ item.bin }} {{ item.version }}"
+
+- name: Carpeta de cada motor
+  ansible.builtin.file:
+    path: "/opt/{{ item.bin }}-{{ item.version }}"
+    state: directory
+    mode: "0755"
+  loop: *motores
+  loop_control:
+    label: "{{ item.bin }} {{ item.version }}"
+
+- name: Descomprimir los motores
+  ansible.builtin.unarchive:
+    src: "/opt/{{ item.bin }}-{{ item.version }}.zip"
+    dest: "/opt/{{ item.bin }}-{{ item.version }}"
+    remote_src: true
+    creates: "/opt/{{ item.bin }}-{{ item.version }}/{{ item.bin }}"
+  loop: *motores
+  loop_control:
+    label: "{{ item.bin }} {{ item.version }}"
+
+- name: Enlazar los motores
+  ansible.builtin.file:
+    src: "/opt/{{ item.bin }}-{{ item.version }}/{{ item.bin }}"
+    dest: "/usr/local/bin/{{ item.bin }}"
+    state: link
+    force: true
+  loop: *motores
+  loop_control:
+    label: "{{ item.bin }} {{ item.version }}"
+
+# ---------- Código ----------
+
+- name: Código de la plataforma ({{ plataforma_ref }})
+  ansible.builtin.git:
+    repo: "{{ plataforma_repo }}"
+    dest: "{{ plataforma_dir }}"
+    version: "{{ plataforma_ref }}"
+    force: true
+  register: codigo
+  notify: Reiniciar plataforma
+
+- name: Dependencias (npm ci)
+  ansible.builtin.command:
+    cmd: /usr/local/bin/npm ci --omit=dev --no-audit --no-fund
+    chdir: "{{ plataforma_dir }}"
+  environment:
+    PATH: "/usr/local/bin:{{ ansible_env.PATH }}"
+  when: codigo.changed or not (plataforma_dir ~ '/node_modules/express') is exists
+
+# ---------- Configuración ----------
+
+- name: Leer la clave de administrador de la plataforma (SSM)
+  ansible.builtin.command:
+    argv: [aws, ssm, get-parameter, --region, "{{ region }}", --with-decryption,
+           --name, "{{ ssm_prefijo }}/admin-key", --query, Parameter.Value, --output, text]
+  register: ssm_clave
+  changed_when: false
+  no_log: true
+
+- name: IP pública (para los enlaces a Grafana)
+  ansible.builtin.shell: |
+    set -o pipefail
+    T=$(curl -sf -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')
+    curl -sf -H "X-aws-ec2-metadata-token: $T" http://169.254.169.254/latest/meta-data/public-ipv4
+  register: imds_ip
+  changed_when: false
+
+- name: Variables de entorno de los servicios
+  ansible.builtin.template:
+    src: plataforma.env.j2
+    dest: /etc/plataforma/plataforma.env
+    owner: root
+    group: root
+    mode: "0600"
+  vars:
+    clave_admin: "{{ ssm_clave.stdout }}"
+    ip_publica: "{{ imds_ip.stdout }}"
+  no_log: true
+  notify: Reiniciar plataforma
+
+- name: Servicios systemd
+  ansible.builtin.template:
+    src: plataforma.service.j2
+    dest: "/etc/systemd/system/{{ servicio.nombre }}.service"
+    mode: "0644"
+  loop:
+    - { nombre: plataforma-api, descripcion: "API y panel", script: api/server.js, puerto_bajo: true }
+    - { nombre: plataforma-worker, descripcion: "worker de operaciones", script: worker/worker.js, puerto_bajo: false }
+  loop_control:
+    loop_var: servicio
+    label: "{{ servicio.nombre }}"
+  notify: Reiniciar plataforma
+
+- name: Arrancar los servicios
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop:
+    - plataforma-api
+    - plataforma-worker
+
+- name: Registrar el commit desplegado
+  ansible.builtin.debug:
+    msg: "Plataforma en {{ plataforma_ref }} ({{ codigo.after }})"

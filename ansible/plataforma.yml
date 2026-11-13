@@ -1,8 +1,8 @@
 # Configura la EC2 de la plataforma. La ejecuta la propia instancia en modo local
 # (ver infra/plataforma/cloud-init.yaml); las variables llegan en vars.json, que genera
 # Terraform a partir de catalogo/planes.json. Ningún secreto está en este repositorio:
-# la clave de Grafana se lee de SSM y el token de la plataforma se guarda en SSM.
-- name: Monitoreo de los tenants (Prometheus, blackbox_exporter y Grafana)
+# las claves de Grafana y de la plataforma se leen de SSM y el token de Grafana se guarda en SSM.
+- name: Plataforma de tenants (portal, API, worker) y su monitoreo (Prometheus, blackbox_exporter y Grafana)
   hosts: localhost
   connection: local
   become: true
@@ -11,3 +11,4 @@
     - prometheus
     - blackbox
     - grafana
+    - plataforma

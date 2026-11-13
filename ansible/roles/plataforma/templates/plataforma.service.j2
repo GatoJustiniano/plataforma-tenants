@@ -1,0 +1,29 @@
+[Unit]
+Description=Plataforma de tenants: {{ servicio.descripcion }}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=plataforma
+Group=plataforma
+WorkingDirectory={{ plataforma_dir }}
+EnvironmentFile=/etc/plataforma/plataforma.env
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/bin/node --disable-warning=ExperimentalWarning {{ servicio.script }}
+Restart=on-failure
+RestartSec=5
+{% if servicio.puerto_bajo %}
+# Escucha en el puerto 80 sin ser root
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+{% else %}
+CapabilityBoundingSet=
+{% endif %}
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths={{ plataforma_datos }}
+
+[Install]
+WantedBy=multi-user.target

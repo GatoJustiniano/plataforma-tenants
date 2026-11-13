@@ -5,6 +5,9 @@
 const { execFile } = require('child_process');
 
 const URL_GRAFANA = (process.env.GRAFANA_URL || '').replace(/\/$/, '');
+// URL para los enlaces del navegador. En la EC2 la API habla con Grafana por localhost,
+// pero el navegador necesita la IP pública.
+const URL_PUBLICA = (process.env.GRAFANA_URL_PUBLICA || URL_GRAFANA).replace(/\/$/, '');
 const TOKEN_SSM = process.env.GRAFANA_TOKEN_SSM || '/asistencia/plataforma/grafana-token';
 const REGION = process.env.AWS_REGION || 'us-east-1';
 const CACHE_MS = 15000;
@@ -66,7 +69,7 @@ function normalizar(json) {
 async function monitoreo() {
   if (!URL_GRAFANA) return { configurado: false };
   if (cache.datos && Date.now() - cache.en < CACHE_MS) return cache.datos;
-  const base = { configurado: true, grafana_url: URL_GRAFANA, dashboard_url: `${URL_GRAFANA}/d/asistencia-tenants` };
+  const base = { configurado: true, grafana_url: URL_PUBLICA, dashboard_url: `${URL_PUBLICA}/d/asistencia-tenants` };
   try {
     const reglas = normalizar(await pedir('/api/prometheus/grafana/api/v1/rules'));
     cache = { en: Date.now(), datos: { ...base, reglas, actualizado: new Date().toISOString() } };

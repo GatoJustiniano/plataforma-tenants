@@ -25,10 +25,28 @@ variable "retencion_metricas_dias" {
 }
 
 variable "cidrs_admin" {
-  description = "IPs (CIDR) que pueden abrir Grafana, p. ej. [\"200.1.2.3/32\"]. Va en terraform.tfvars, que no se sube a git."
+  description = "IPs (CIDR) que pueden abrir el portal y Grafana, p. ej. [\"200.1.2.3/32\"]. Va en terraform.tfvars, que no se sube a git."
   type        = list(string)
   validation {
     condition     = alltrue([for c in var.cidrs_admin : can(cidrnetmask(c)) && c != "0.0.0.0/0"])
     error_message = "Cada valor debe ser un CIDR válido y no puede ser 0.0.0.0/0."
   }
+}
+
+variable "plataforma_ref" {
+  description = "Rama o tag de plataforma-tenants que se despliega en la EC2"
+  type        = string
+  default     = "main"
+}
+
+variable "infra_ref" {
+  description = "Rama o tag de asistencia-infra que usa el worker para los tenants"
+  type        = string
+  default     = "main"
+}
+
+variable "app_version" {
+  description = "Rama o tag de asistencia-app que se instala en los tenants nuevos"
+  type        = string
+  default     = "main"
 }

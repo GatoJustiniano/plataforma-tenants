@@ -13,6 +13,8 @@ const MOTORES = ['terraform', 'opentofu', 'pulumi', 'cloudformation'];
 const ENTORNOS = ['dev', 'qa', 'prod'];
 const RE_ID = /^[a-z0-9][a-z0-9-]{1,28}[a-z0-9]$/;
 const RE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Los recursos de un tenant se llaman asistencia-<id>-*: estos ids chocarían con los de la plataforma
+const RE_RESERVADO = /^(plataforma|limite)(-|$)/;
 
 const app = express();
 app.use(express.json({ limit: '100kb' }));
@@ -89,6 +91,7 @@ app.get('/api/tenants/:id', (req, res) => {
 app.post('/api/tenants', (req, res) => {
   const { id, nombre, contacto_email, entorno = 'dev', plan, motor = 'terraform' } = req.body || {};
   if (!RE_ID.test(id || '')) return err(res, 400, 'Identificador inválido: 3-30 caracteres, minúsculas, números y guiones');
+  if (RE_RESERVADO.test(id)) return err(res, 400, `El identificador "${id}" está reservado para la plataforma`);
   if (!nombre || String(nombre).trim().length < 3) return err(res, 400, 'El nombre de la institución es obligatorio');
   if (!RE_EMAIL.test(contacto_email || '')) return err(res, 400, 'Correo de contacto inválido');
   if (!ENTORNOS.includes(entorno)) return err(res, 400, `Entorno inválido (${ENTORNOS.join(', ')})`);
