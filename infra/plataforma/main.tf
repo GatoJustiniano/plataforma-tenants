@@ -255,13 +255,13 @@ resource "aws_iam_role_policy" "worker" {
         Sid    = "SecretosTenants"
         Effect = "Allow"
         Action = ["ssm:PutParameter", "ssm:DeleteParameter", "ssm:GetParameter", "ssm:GetParameters",
-        "ssm:AddTagsToResource", "ssm:RemoveTagsFromResource", "ssm:ListTagsForResource"]
+        "ssm:AddTagsToResource", "ssm:RemoveTagsFromResource"]
         Resource = "arn:aws:ssm:${var.region}:${var.aws_account_id}:parameter/asistencia/*"
       },
       {
-        Sid      = "DescribirParametros"
+        Sid      = "LeerMetadatosParametros"
         Effect   = "Allow"
-        Action   = "ssm:DescribeParameters"
+        Action   = ["ssm:DescribeParameters", "ssm:ListTagsForResource"] # solo lectura; ListTagsForResource no se evalúa por ARN del parámetro
         Resource = "*"
       },
       {
