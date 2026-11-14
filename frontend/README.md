@@ -1,6 +1,6 @@
 # frontend
 
-Panel de administración de la plataforma ("Tenant Control Center"), basado en el mockup del enunciado. Es HTML, CSS y JavaScript sin frameworks, y lo sirve la API en http://localhost:4000.
+Panel de administración de la plataforma ("Plataforma Código Cero"), basado en el mockup del enunciado. Es HTML, CSS y JavaScript sin frameworks, y lo sirve la API en http://localhost:4000.
 
 | Vista | Ruta | Requisitos |
 |---|---|---|
