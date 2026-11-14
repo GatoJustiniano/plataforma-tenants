@@ -70,7 +70,7 @@
       "nombre": "Avanzado",
       "descripcion": "Para alta demanda",
       "infra": {
-        "instance_type": "t3.medium",
+        "instance_type": "c7i-flex.large",
         "vcpu": 2,
         "memoria_gib": 4,
         "root_volume_gb": 8,
@@ -92,7 +92,7 @@
         "intervalo_metricas_s": 15
       },
       "costo_estimado": {
-        "activo_mes": 37.86,
+        "activo_mes": 69.39,
         "suspendido_mes": 3.84
       }
     }

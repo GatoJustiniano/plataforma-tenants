@@ -51,16 +51,17 @@ data "aws_ec2_instance_type_offerings" "zonas" {
   location_type = "availability-zone"
   filter {
     name   = "instance-type"
-    values = ["t3.micro", "t3.small", "t3.medium"]
+    values = local.tipos_catalogo
   }
 }
 
 locals {
-  prefijo = "asistencia-plataforma"
-  # Dos zonas que tengan los tres tipos de instancia
+  prefijo        = "asistencia-plataforma"
+  tipos_catalogo = distinct([for p in jsondecode(file("${path.module}/../../catalogo/planes.json")).planes : p.infra.instance_type])
+  # Dos zonas que tengan todos los tipos de instancia del catálogo
   zonas = slice(sort([
     for z in distinct(data.aws_ec2_instance_type_offerings.zonas.locations) : z
-    if length([for l in data.aws_ec2_instance_type_offerings.zonas.locations : l if l == z]) == 3
+    if length([for l in data.aws_ec2_instance_type_offerings.zonas.locations : l if l == z]) == length(local.tipos_catalogo)
   ]), 0, 2)
 }
 

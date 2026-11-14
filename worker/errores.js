@@ -3,6 +3,7 @@ const { sanitizar } = require('../comun/sanitizar');
 
 const CONOCIDOS = [
   [/VcpuLimitExceeded|InstanceLimitExceeded/i, 'Se alcanzó la cuota de vCPU/instancias de la cuenta AWS. Elimina o suspende tenants, o pide un aumento de cuota.'],
+  [/not eligible for Free Tier/i, 'La cuenta AWS está en el plan gratuito y no permite el tipo de instancia de este plan. Cambia instance_type en el catálogo por uno elegible (describe-instance-types con free-tier-eligible=true) y reintenta.'],
   [/InsufficientInstanceCapacity/i, 'AWS no tiene capacidad para ese tipo de instancia en la zona ahora mismo. Reintenta en unos minutos.'],
   [/ExpiredToken|InvalidClientTokenId|no valid credential sources|SignatureDoesNotMatch/i, 'Las credenciales AWS del worker no son válidas o vencieron.'],
   [/AccessDenied|UnauthorizedOperation|not authorized to perform/i, 'El worker no tiene permisos IAM para una de las acciones de la plantilla.'],

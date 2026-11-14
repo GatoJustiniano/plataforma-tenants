@@ -12,7 +12,7 @@ Este documento lo explica; si cambia un valor, se cambia primero en el JSON.
 | | **Básico** | **Estándar** | **Avanzado** |
 |---|---|---|---|
 | Para | Instituciones pequeñas | Instituciones en crecimiento | Alta demanda |
-| **Cómputo** (EC2) | t3.micro: 2 vCPU, 1 GiB | t3.small: 2 vCPU, 2 GiB | t3.medium: 2 vCPU, 4 GiB |
+| **Cómputo** (EC2) | t3.micro: 2 vCPU, 1 GiB | t3.small: 2 vCPU, 2 GiB | c7i-flex.large: 2 vCPU, 4 GiB |
 | **Disco del sistema** | 8 GB gp3 | 8 GB gp3 | 8 GB gp3 |
 | **Volumen de datos** (SQLite, cifrado) | 10 GB gp3 | 20 GB gp3 | 40 GB gp3 |
 | Estudiantes | hasta 100 | hasta 1 000 | hasta 5 000 |
@@ -22,7 +22,7 @@ Este documento lo explica; si cambia un valor, se cambia primero en el JSON.
 | Retención mientras está suspendido | 30 días | 90 días | 180 días |
 | Respaldo (snapshot EBS)* | semanal, 7 días | diario, 14 días | diario, 30 días |
 | Intervalo de métricas | 60 s | 30 s | 15 s |
-| **Costo aprox. activo** | ~12.7 USD/mes | ~21.1 USD/mes | ~37.9 USD/mes |
+| **Costo aprox. activo** | ~12.7 USD/mes | ~21.1 USD/mes | ~69.4 USD/mes |
 | **Costo aprox. suspendido** | ~1.4 USD/mes | ~2.2 USD/mes | ~3.8 USD/mes |
 
 \* Los respaldos se implementan en la fase final del proyecto, con snapshots del volumen de datos y estos valores. RF-19 aparece tachado en el enunciado, pero el entregable 6 todavía lo menciona.
@@ -41,9 +41,13 @@ Todos los planes incluyen frontend y API, una base de datos aislada en su propio
 | `monitoreo.intervalo_metricas_s` | Intervalo con que Prometheus lee las métricas de ese tenant |
 | `comunes.alertas` | Umbrales de las reglas de alerta en Grafana (RF-28) |
 
-### Por qué los tres planes tienen 2 vCPU
+### Tipos de instancia: plan gratuito de AWS
 
-La familia t3 (micro, small, medium) tiene siempre 2 vCPU; lo que cambia es la memoria y el crédito de CPU sostenida. Así la demo cabe sin problema en la cuota de la cuenta (16 vCPU On-Demand): 4 tenants y la plataforma suman 10 vCPU. Además, t3.micro entra en la capa gratuita.
+La cuenta está en el **plan gratuito de AWS** (cuentas creadas desde julio de 2025), que solo permite lanzar tipos elegibles para la capa gratuita (`aws ec2 describe-instance-types --filters Name=free-tier-eligible,Values=true`). `t3.micro` y `t3.small` lo son, pero `t3.medium` no: AWS rechaza `RunInstances` con `InvalidParameterCombination ... not eligible for Free Tier`.
+
+Por eso Avanzado usa **`c7i-flex.large`**: la misma capacidad que una `t3.medium` (2 vCPU, 4 GiB), x86 como la AMI de Packer, y sin créditos de CPU que se agoten. Cuesta más por hora, pero en el plan gratuito lo cubren los créditos de la cuenta. Las `t4g` no sirven porque son ARM. En una cuenta de pago puede volver a `t3.medium` cambiando solo el catálogo.
+
+Los tres planes tienen 2 vCPU; lo que cambia es la memoria. Así la demo cabe sin problema en la cuota de la cuenta (16 vCPU On-Demand): 4 tenants y la plataforma suman 10 vCPU.
 
 ## Límites de uso (RF-05)
 
@@ -68,11 +72,11 @@ Precios On-Demand de us-east-1, aproximados (730 h/mes):
 
 | Concepto | Básico | Estándar | Avanzado |
 |---|---|---|---|
-| EC2 | 7.59 (t3.micro) | 15.18 (t3.small) | 30.37 (t3.medium) |
+| EC2 | 7.59 (t3.micro) | 15.18 (t3.small) | 61.90 (c7i-flex.large) |
 | Disco raíz 8 GB gp3 | 0.64 | 0.64 | 0.64 |
 | Volumen de datos gp3 | 0.80 | 1.60 | 3.20 |
 | IP pública IPv4 | 3.65 | 3.65 | 3.65 |
-| **Total activo** | **12.68** | **21.07** | **37.86** |
+| **Total activo** | **12.68** | **21.07** | **69.39** |
 | **Total suspendido** (solo discos) | **1.44** | **2.24** | **3.84** |
 
 Para la demo los tenants viven unas pocas horas, así que el costo real es de centavos. Al terminar cada sesión de pruebas se eliminan con la plataforma o con `terraform destroy`.
