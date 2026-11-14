@@ -93,6 +93,7 @@ app.post('/api/tenants', (req, res) => {
   if (!RE_ID.test(id || '')) return err(res, 400, 'Identificador inválido: 3-30 caracteres, minúsculas, números y guiones');
   if (RE_RESERVADO.test(id)) return err(res, 400, `El identificador "${id}" está reservado para la plataforma`);
   if (!nombre || String(nombre).trim().length < 3) return err(res, 400, 'El nombre de la institución es obligatorio');
+  if (String(nombre).trim().length > 120 || /[\u0000-\u001f]/.test(nombre)) return err(res, 400, 'El nombre de la institución debe tener como máximo 120 caracteres y una sola línea');
   if (!RE_EMAIL.test(contacto_email || '')) return err(res, 400, 'Correo de contacto inválido');
   if (!ENTORNOS.includes(entorno)) return err(res, 400, `Entorno inválido (${ENTORNOS.join(', ')})`);
   if (!obtenerPlan(plan)) return err(res, 400, 'Plan inexistente');

@@ -17,6 +17,7 @@ function obtenerPlan(id) {
 function variablesTenant(tenant, plan, { suspendido = false, appVersion } = {}) {
   return {
     tenant_id: tenant.id,
+    nombre: tenant.nombre, // título de la app del tenant
     entorno: tenant.entorno,
     plan: plan.id,
     motor: tenant.motor === 'opentofu' ? 'opentofu' : 'terraform',
