@@ -231,6 +231,7 @@ const Vistas = {
     const botones = [];
     if (!ocupado && t.estado === 'activo') botones.push('<button class="boton" data-accion="suspender">Suspender</button>');
     if (!ocupado && t.estado === 'suspendido') botones.push('<button class="boton primario" data-accion="reanudar">Reanudar</button>');
+    if (!ocupado && ['activo', 'suspendido'].includes(t.estado)) botones.push('<button class="boton" data-accion="respaldar">Respaldar ahora</button>');
     if (!ocupado && t.estado === 'fallido' && ultima?.estado === 'fallida') botones.push(`<button class="boton primario" data-reintentar="${ultima.id}">Reintentar ${esc(TEXTO_TIPO[ultima.tipo].toLowerCase())}</button>`);
     if (!ocupado && ['activo', 'suspendido', 'fallido'].includes(t.estado)) botones.push('<button class="boton peligro" data-accion="eliminar">Eliminar…</button>');
 
@@ -252,6 +253,7 @@ const Vistas = {
         <div><span>Actualizado</span>${fecha(t.actualizado_en)}</div>
       </div>
       <div class="tarjeta" id="alertas-tenant" style="margin-top:16px" hidden></div>
+      <div class="tarjeta" id="respaldos-tenant" style="margin-top:16px"><h2>Respaldos</h2><p class="muted">Consultando snapshots…</p></div>
       <div class="grid" style="grid-template-columns:minmax(0,5fr) minmax(0,7fr);margin-top:16px;align-items:start">
         <div class="tarjeta"><h2>Historial de operaciones</h2>${tablaOperaciones(t.operaciones, { seleccion: opSel, tenantId: t.id })}</div>
         <div class="tarjeta" id="panel-op">${opSel ? '<p class="muted">Cargando operación…</p>' : '<div class="vacio">Sin operaciones</div>'}</div>
@@ -260,6 +262,7 @@ const Vistas = {
     document.querySelectorAll('[data-accion]').forEach((b) => b.addEventListener('click', async () => {
       const accion = b.dataset.accion;
       if (accion === 'suspender' && !confirm(`¿Suspender ${t.id}? La instancia se detendrá; los datos se conservan.`)) return;
+      if (accion === 'respaldar' && !confirm(`¿Crear ahora un snapshot del volumen de datos de ${t.id}? La app sigue funcionando mientras tanto.`)) return;
       b.disabled = true;
       try {
         const r = await api(`/tenants/${t.id}/${accion}`, { metodo: 'POST' });
@@ -275,6 +278,7 @@ const Vistas = {
     }));
 
     pintarAlertasTenant(t);
+    pintarRespaldos(t, ocupado);
     if (!opSel) return null;
     return panelOperacion(opSel, t);
   },
@@ -291,7 +295,7 @@ const Vistas = {
       ['Cursos', (p) => `hasta ${num(p.limites.cursos)}`],
       ['Importación Excel', (p) => `hasta ${p.limites.tamano_importacion_mb} MB`],
       ['Retención si se suspende', (p) => `${p.operacion.retencion_suspendido_dias} días`],
-      ['Respaldo', (p) => `${esc(p.operacion.respaldo)}, ${p.operacion.retencion_respaldos_dias} días <span class="badge">fase final</span>`],
+      ['Respaldo (snapshot del volumen de datos)', (p) => `${esc(p.operacion.respaldo)}, se guarda ${p.operacion.retencion_respaldos_dias} días`],
       ['Intervalo de métricas', (p) => `${p.monitoreo.intervalo_metricas_s} s`],
       ['Costo activo', (p) => usd(p.costo_estimado.activo_mes)],
       ['Costo suspendido', (p) => usd(p.costo_estimado.suspendido_mes)],
@@ -432,6 +436,62 @@ function tablaAlertas(alertas, m, conTenant) {
 
 // Tarjeta del detalle: alertas del tenant y enlace a su panel de Grafana. Si Grafana no
 // está configurado o no responde, la tarjeta no aparece (no bloquea el resto de la vista).
+// ---------- Respaldos del tenant (RF-19) ----------
+const TEXTO_ORIGEN = { programado: 'programado', manual: 'a pedido', 'pre-restauracion': 'antes de restaurar' };
+
+async function pintarRespaldos(t, ocupado) {
+  const el = document.getElementById('respaldos-tenant');
+  if (!el) return;
+  let r;
+  try { r = await api(`/tenants/${encodeURIComponent(t.id)}/respaldos`); } catch (e) {
+    el.innerHTML = `<h2>Respaldos</h2><div class="nota mal">${esc(e.message)}</div>`; return;
+  }
+  const pol = r.politica;
+  const puedeRestaurar = t.estado === 'activo' && !ocupado;
+  const filas = r.respaldos.map((s) => `<tr>
+      <td>${fecha(s.fecha)}</td>
+      <td><span class="badge ${s.origen === 'programado' ? '' : 'curso'}">${esc(TEXTO_ORIGEN[s.origen] || s.origen)}</span></td>
+      <td>${s.estado === 'completed' ? '<span class="badge ok">completo</span>' : `<span class="badge curso">${esc(s.estado)} ${esc(s.progreso || '')}</span>`}</td>
+      <td>${s.tamano_gb} GB</td>
+      <td>${s.expira ? fecha(s.expira) : '—'}</td>
+      <td class="mono"><small>${esc(s.id)}</small></td>
+      <td>${puedeRestaurar && s.estado === 'completed' ? `<button class="boton chico" data-restaurar="${esc(s.id)}" data-fecha="${esc(s.fecha)}">Restaurar…</button>` : ''}</td>
+    </tr>`).join('');
+  el.innerHTML = `
+    <div class="cabecera" style="margin-bottom:8px"><h2>Respaldos</h2>
+      <small class="muted">${pol ? `Programados: ${esc(pol.frecuencia)} a las 02:00 (hora de Bolivia), se guardan ${pol.retencion_dias} días` : ''}</small></div>
+    ${r.respaldos.length ? `<table><thead><tr><th>Fecha</th><th>Origen</th><th>Estado</th><th>Tamaño</th><th>Vence</th><th>Snapshot</th><th></th></tr></thead>
+      <tbody>${filas}</tbody></table>` : '<div class="vacio">Todavía no hay respaldos. El primero programado se crea en la próxima ventana del plan, o usa "Respaldar ahora".</div>'}
+    ${t.estado !== 'activo' && r.respaldos.length ? '<p class="muted"><small>Para restaurar, el tenant debe estar activo.</small></p>' : ''}
+    <div id="confirmar-restaurar"></div>`;
+
+  el.querySelectorAll('[data-restaurar]').forEach((b) => b.addEventListener('click', () => {
+    const snap = b.dataset.restaurar;
+    const caja = document.getElementById('confirmar-restaurar');
+    caja.innerHTML = `<div class="nota mal" style="margin-top:12px">
+      <strong>Restaurar los datos al ${esc(fecha(b.dataset.fecha))}</strong> (<span class="mono">${esc(snap)}</span>).
+      Se reemplaza la base de datos actual: lo registrado después de esa fecha se perderá.
+      Antes se crea un respaldo de los datos actuales, por si hay que volver atrás.
+      La instancia se recrea: la app no responde unos minutos y su IP pública cambia.
+      <label style="margin-top:8px">Para confirmar escribe <code>${esc(t.id)}</code></label>
+      <input id="c-restaurar" class="mono" autocomplete="off" style="margin-bottom:8px">
+      <div class="acciones"><button class="boton peligro lleno" id="b-restaurar" disabled>Restaurar</button>
+        <button class="boton" id="b-no-restaurar">Cancelar</button></div></div>`;
+    const input = document.getElementById('c-restaurar');
+    const ok = document.getElementById('b-restaurar');
+    input.focus();
+    input.addEventListener('input', () => { ok.disabled = input.value !== t.id; });
+    document.getElementById('b-no-restaurar').addEventListener('click', () => { caja.innerHTML = ''; });
+    ok.addEventListener('click', async () => {
+      ok.disabled = true;
+      try {
+        const res = await api(`/tenants/${t.id}/restaurar`, { metodo: 'POST', cuerpo: { snapshot_id: snap, confirmacion: input.value } });
+        location.hash = `#/tenants/${t.id}/op/${res.operacion.id}`;
+      } catch (e) { avisar(e.message, 'mal'); ok.disabled = false; }
+    });
+  }));
+}
+
 async function pintarAlertasTenant(t) {
   let m;
   try { m = await api(`/monitoreo?tenant=${encodeURIComponent(t.id)}`); } catch { return; }

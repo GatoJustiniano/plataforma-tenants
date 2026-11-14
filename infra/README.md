@@ -6,7 +6,7 @@ Terraform de la propia plataforma. Se aplica **una vez por cuenta**, antes de cr
 |---|---|---|
 | `bootstrap/` | Bucket S3 `asistencia-iac-estado-<cuenta>`: versionado, cifrado AES256, sin acceso público, solo TLS | Local (`bootstrap/terraform.tfstate`, fuera de git) |
 | `red/` | VPC compartida `10.20.0.0/16`, 2 subredes públicas, IGW y el SG de la plataforma | S3: `plataforma/red.tfstate` |
-| `plataforma/` | EC2 de la plataforma (t3.small, IP elástica) con el portal, la API y el worker, y Prometheus, blackbox_exporter y Grafana, instalados por Ansible; rol IAM del worker, permissions boundary de los tenants, claves del portal y de Grafana en SSM | S3: `plataforma/portal.tfstate` |
+| `plataforma/` | EC2 de la plataforma (t3.small, IP elástica) con el portal, la API y el worker, y Prometheus, blackbox_exporter y Grafana, instalados por Ansible; rol IAM del worker, permissions boundary de los tenants, claves del portal y de Grafana en SSM; políticas de respaldo (Data Lifecycle Manager) por plan | S3: `plataforma/portal.tfstate` |
 
 ## Orden
 

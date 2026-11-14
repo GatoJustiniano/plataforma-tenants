@@ -40,7 +40,7 @@ function duracion(desde, hasta) {
 
 const CLASE_ESTADO = {
   activo: 'ok', exitosa: 'ok',
-  aprovisionando: 'curso', reanudando: 'curso', suspendiendo: 'curso', eliminando: 'curso', en_curso: 'curso', pendiente: 'curso',
+  aprovisionando: 'curso', reanudando: 'curso', restaurando: 'curso', suspendiendo: 'curso', eliminando: 'curso', en_curso: 'curso', pendiente: 'curso',
   suspendido: 'alerta', esperando_confirmacion: 'alerta',
   fallido: 'mal', fallida: 'mal',
   eliminado: '', cancelada: '',
@@ -53,6 +53,7 @@ const badge = (estado) => `<span class="badge ${CLASE_ESTADO[estado] ?? ''}">${e
 const TEXTO_TIPO = {
   crear: 'Crear', suspender: 'Suspender', reanudar: 'Reanudar',
   plan_eliminar: 'Previsualizar eliminación', eliminar: 'Eliminar',
+  respaldar: 'Respaldar', restaurar: 'Restaurar',
 };
 const ENTORNOS = { dev: 'Desarrollo', qa: 'Pruebas', prod: 'Producción' };
 const MOTORES = {

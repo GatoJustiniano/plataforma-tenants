@@ -48,10 +48,15 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_ops_estado ON operaciones(estado, id);
 `);
 
+// Migración: parámetros de una operación (p. ej. el snapshot a restaurar). JSON.
+if (!db.prepare('PRAGMA table_info(operaciones)').all().some((c) => c.name === 'parametros')) {
+  db.exec('ALTER TABLE operaciones ADD COLUMN parametros TEXT');
+}
+
 const ESTADOS_TENANT = [
   'aprovisionando', 'activo', 'fallido',
   'suspendiendo', 'suspendido', 'reanudando',
-  'eliminando', 'eliminado',
+  'eliminando', 'eliminado', 'restaurando',
 ];
 
 // Qué estado toma el tenant mientras corre cada operación y al terminar bien
@@ -61,6 +66,8 @@ const TIPOS_OPERACION = {
   reanudar:       { durante: 'reanudando',     exito: 'activo' },
   plan_eliminar:  { durante: null,             exito: null },        // solo calcula qué se borrará
   eliminar:       { durante: 'eliminando',     exito: 'eliminado' },
+  respaldar:      { durante: null,             exito: null },        // snapshot a pedido: el tenant sigue como estaba
+  restaurar:      { durante: 'restaurando',    exito: 'activo' },    // volumen de datos nuevo desde un snapshot
 };
 
 const ahora = () => new Date().toISOString();

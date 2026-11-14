@@ -25,7 +25,7 @@ Este documento lo explica; si cambia un valor, se cambia primero en el JSON.
 | **Costo aprox. activo** | ~12.7 USD/mes | ~21.1 USD/mes | ~69.4 USD/mes |
 | **Costo aprox. suspendido** | ~1.4 USD/mes | ~2.2 USD/mes | ~3.8 USD/mes |
 
-\* Los respaldos se implementan en la fase final del proyecto, con snapshots del volumen de datos y estos valores. RF-19 aparece tachado en el enunciado, pero el entregable 6 todavía lo menciona.
+\* Snapshots del volumen de datos: los programados los crea AWS Data Lifecycle Manager, con una política por plan. También se puede respaldar a pedido y restaurar desde el panel. Ver [respaldos.md](respaldos.md). RF-19 aparece tachado en el enunciado, pero el entregable 6 todavía lo menciona.
 
 Todos los planes incluyen frontend y API, una base de datos aislada en su propio volumen EBS cifrado y monitoreo en Grafana.
 
@@ -64,7 +64,7 @@ RF-05 ("impedir que un tenant exceda los límites") está tachado en el enunciad
 | **Suspender** | Detiene la EC2 (`stopped`). Se libera la IP pública y solo se paga el almacenamiento. | El volumen de datos se conserva intacto |
 | **Reanudar** | Arranca la EC2 y espera a que `/api/health` responda 200 | Mismos datos que antes de suspender. La URL puede cambiar porque la IP pública es nueva. |
 | **Suspendido más allá de la retención** | Nada automático; la plataforma lo marca como "retención vencida" | Se conservan hasta que el administrador elimine el tenant |
-| **Eliminar** | `plan -destroy`: se muestra la lista de recursos y se pide confirmación (RF-18) | El volumen de datos se borra. Si hay respaldos, se conservan según `retencion_respaldos_dias`. |
+| **Eliminar** | `plan -destroy`: se muestra la lista de recursos y se pide confirmación (RF-18) | El volumen de datos se borra. Los respaldos se conservan hasta vencer según `retencion_respaldos_dias` ([respaldos.md](respaldos.md)). |
 
 ## Costos estimados
 

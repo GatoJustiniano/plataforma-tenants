@@ -9,10 +9,12 @@ const { Registro } = require('./registro');
 const { prepararPlantillas } = require('./plantillas');
 const { mensajeError } = require('./errores');
 const { crearMotor } = require('./motores/terraform');
+const respaldos = require('../comun/respaldos');
 
 // En la EC2 el código es de solo lectura: las carpetas de trabajo van en TRABAJOS_DIR (/var/lib/plataforma)
 const TRABAJOS = process.env.TRABAJOS_DIR ? path.resolve(process.env.TRABAJOS_DIR) : path.resolve(__dirname, 'trabajos');
 const INTERVALO_MS = 2000;
+const PURGA_MS = 60 * 60 * 1000; // cada hora borra los respaldos a pedido ya vencidos
 const HEALTH_TIMEOUT_S = Number(process.env.HEALTH_TIMEOUT_S) || 600;
 
 const MOTORES = {
@@ -58,7 +60,16 @@ async function ejecutar(op) {
   const versiones = { app: tenant.app_version };
   reg.linea(`Operación #${op.id} "${op.tipo}" sobre el tenant ${tenant.id} (motor ${tenant.motor}, plan ${tenant.plan})`);
 
+  const parametros = op.parametros ? JSON.parse(op.parametros) : {};
   try {
+    // Respaldo a pedido (RF-19): solo un snapshot; no hace falta el motor de IaC
+    if (op.tipo === 'respaldar') {
+      reg.paso('Creando snapshot del volumen de datos');
+      const s = await respaldos.crear(tenant, obtenerPlan(tenant.plan), { origen: 'manual', usuario: op.solicitado_por, registro: reg });
+      terminar(op, 'exitosa', { paso: `Respaldo ${s.id} creado`, resultado: { snapshot: s }, versiones });
+      return;
+    }
+
     const fabrica = MOTORES[tenant.motor];
     if (!fabrica) throw new Error(`El motor "${tenant.motor}" todavía no está implementado en el worker`);
     const motor = fabrica();
@@ -69,8 +80,10 @@ async function ejecutar(op) {
     versiones.plantillas = await prepararPlantillas(dir, reg);
     const raiz = path.join(dir, 'terraform');
     const suspendido = op.tipo === 'suspender';
+    const restaurar = op.tipo === 'restaurar';
+    if (restaurar && !/^snap-[0-9a-f]+$/.test(parametros.snapshot_id || '')) throw new Error('Falta el snapshot a restaurar');
     fs.writeFileSync(path.join(raiz, 'tenant.tfvars.json'),
-      JSON.stringify(variablesTenant(tenant, plan, { suspendido }), null, 2));
+      JSON.stringify(variablesTenant(tenant, plan, { suspendido, snapshotDatos: restaurar ? parametros.snapshot_id : null }), null, 2));
 
     reg.paso('Inicializando el motor y el estado remoto');
     await motor.init(reg, raiz, tenant.id);
@@ -97,9 +110,19 @@ async function ejecutar(op) {
       return;
     }
 
-    // crear | suspender | reanudar: todas son un apply sobre el mismo estado (idempotente)
-    reg.paso(suspendido ? 'Deteniendo la instancia' : 'Aplicando la infraestructura');
-    await motor.apply(reg, raiz, 'tenant.tfvars.json');
+    // Restaurar: primero un respaldo de seguridad de los datos actuales, por si hay que volver atrás
+    let seguridad = null;
+    if (restaurar) {
+      reg.paso('Respaldo de seguridad de los datos actuales');
+      seguridad = await respaldos.crear(tenant, plan, { origen: 'pre-restauracion', usuario: op.solicitado_por, registro: reg });
+      versiones.snapshot_restaurado = parametros.snapshot_id;
+    }
+
+    // crear | suspender | reanudar | restaurar: todas son un apply sobre el mismo estado (idempotente).
+    // Al restaurar se reemplaza el volumen de datos por uno creado desde el snapshot; la instancia
+    // se detiene antes de desconectarlo y se recrea, y cloud-init monta el volumen restaurado.
+    reg.paso(suspendido ? 'Deteniendo la instancia' : restaurar ? `Restaurando los datos desde ${parametros.snapshot_id}` : 'Aplicando la infraestructura');
+    await motor.apply(reg, raiz, 'tenant.tfvars.json', restaurar ? ['-replace=module.tenant.aws_ebs_volume.datos'] : []);
     const outputs = await motor.outputs(reg, raiz);
     if (outputs.ami_id) versiones.ami = outputs.ami_id; // AMI de Packer usada (RF-13)
 
@@ -113,12 +136,13 @@ async function ejecutar(op) {
       url: outputs.url_app || null,
       instance_id: outputs.instance_id || null,
     });
-    terminar(op, 'exitosa', { paso: 'Completada', resultado: { outputs }, versiones });
+    terminar(op, 'exitosa', { paso: 'Completada', resultado: { outputs, ...(restaurar ? { restaurado_desde: parametros.snapshot_id, respaldo_previo: seguridad } : {}) }, versiones });
     fs.rmSync(dir, { recursive: true, force: true });
   } catch (e) {
     const mensaje = mensajeError(e);
     reg.linea(`\nERROR: ${mensaje}`);
-    actualizarTenant(tenant.id, { estado: 'fallido' });
+    // Un respaldo fallido no cambia nada en el tenant: sigue como estaba
+    if (op.tipo !== 'respaldar') actualizarTenant(tenant.id, { estado: 'fallido' });
     terminar(op, 'fallida', { paso: 'Falló', error: mensaje, versiones });
     // la carpeta de trabajo se conserva para diagnóstico
   } finally {
@@ -163,9 +187,18 @@ async function bucle() {
   let detener = false;
   process.on('SIGINT', () => { console.log('Deteniendo al terminar la operación actual...'); detener = true; });
 
+  let ultimaPurga = 0;
   while (!detener) {
     const op = tomarSiguiente.get(ahora());
-    if (!op) { await dormir(INTERVALO_MS); continue; }
+    if (!op) {
+      if (Date.now() - ultimaPurga > PURGA_MS) {
+        ultimaPurga = Date.now();
+        respaldos.purgarVencidos()
+          .then((b) => { if (b.length) console.log(`Respaldos vencidos borrados: ${b.join(', ')}`); })
+          .catch((e) => console.warn(`No se pudieron purgar los respaldos vencidos: ${e.message}`));
+      }
+      await dormir(INTERVALO_MS); continue;
+    }
     console.log(`→ #${op.id} ${op.tipo} ${op.tenant_id}`);
     await ejecutar(op);
     const fin = db.prepare('SELECT estado, error FROM operaciones WHERE id = ?').get(op.id);

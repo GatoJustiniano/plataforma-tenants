@@ -6,6 +6,7 @@ const express = require('express');
 const { db, TIPOS_OPERACION, ahora } = require('../comun/db');
 const { leerCatalogo, obtenerPlan } = require('../comun/catalogo');
 const { monitoreo } = require('./grafana');
+const respaldos = require('../comun/respaldos');
 
 const PORT = Number(process.env.PORT) || 4000;
 const ADMIN_KEY = process.env.PLATAFORMA_ADMIN_KEY || '';
@@ -49,14 +50,16 @@ function operacionActiva(tenantId) {
 function formatoOperacion(op, { conLog = false } = {}) {
   if (!op) return null;
   const o = { ...op, resultado: op.resultado ? JSON.parse(op.resultado) : null,
-    versiones: op.versiones ? JSON.parse(op.versiones) : null };
+    versiones: op.versiones ? JSON.parse(op.versiones) : null,
+    parametros: op.parametros ? JSON.parse(op.parametros) : null };
   if (!conLog) delete o.log;
   return o;
 }
 
-function encolar(tenantId, tipo, usuario, reintentoDe = null) {
-  const r = db.prepare(`INSERT INTO operaciones (tenant_id, tipo, estado, solicitado_por, reintento_de, paso, creada_en)
-    VALUES (?, ?, 'pendiente', ?, ?, 'En cola', ?)`).run(tenantId, tipo, usuario, reintentoDe, ahora());
+function encolar(tenantId, tipo, usuario, reintentoDe = null, parametros = null) {
+  const r = db.prepare(`INSERT INTO operaciones (tenant_id, tipo, estado, solicitado_por, reintento_de, paso, creada_en, parametros)
+    VALUES (?, ?, 'pendiente', ?, ?, 'En cola', ?, ?)`).run(tenantId, tipo, usuario, reintentoDe, ahora(),
+    parametros ? JSON.stringify(parametros) : null);
   const durante = TIPOS_OPERACION[tipo].durante;
   if (durante) db.prepare('UPDATE tenants SET estado = ?, actualizado_en = ? WHERE id = ?').run(durante, ahora(), tenantId);
   return db.prepare('SELECT * FROM operaciones WHERE id = ?').get(r.lastInsertRowid);
@@ -122,9 +125,10 @@ const ACCIONES = {
   suspender:     { tipo: 'suspender',     desde: ['activo'] },
   reanudar:      { tipo: 'reanudar',      desde: ['suspendido'] },
   eliminar:      { tipo: 'plan_eliminar', desde: ['activo', 'suspendido', 'fallido'] }, // RF-18: primero se previsualiza
+  respaldar:     { tipo: 'respaldar',     desde: ['activo', 'suspendido'] },          // RF-19: snapshot a pedido
 };
 
-app.post('/api/tenants/:id/:accion(suspender|reanudar|eliminar)', (req, res) => {
+app.post('/api/tenants/:id/:accion(suspender|reanudar|eliminar|respaldar)', (req, res) => {
   const t = getTenant(req.params.id);
   if (!t) return err(res, 404, 'Tenant no encontrado');
   const accion = ACCIONES[req.params.accion];
@@ -132,6 +136,39 @@ app.post('/api/tenants/:id/:accion(suspender|reanudar|eliminar)', (req, res) => 
   const activa = operacionActiva(t.id);
   if (activa) return err(res, 409, `El tenant ya tiene una operación en curso (#${activa.id} ${activa.tipo}: ${activa.estado})`);
   res.status(202).json({ operacion: formatoOperacion(encolar(t.id, accion.tipo, req.usuario)) });
+});
+
+// ---------- Respaldos (RF-19) ----------
+// Snapshots del volumen de datos: programados (Data Lifecycle Manager), a pedido y previos a restaurar
+app.get('/api/tenants/:id/respaldos', async (req, res) => {
+  const t = getTenant(req.params.id);
+  if (!t) return err(res, 404, 'Tenant no encontrado');
+  const plan = obtenerPlan(t.plan);
+  try {
+    res.json({ politica: plan ? { frecuencia: plan.operacion.respaldo, retencion_dias: plan.operacion.retencion_respaldos_dias } : null,
+      respaldos: await respaldos.listar(t.id, plan) });
+  } catch (e) {
+    res.status(502).json({ error: 'No se pudieron consultar los respaldos en AWS', detalle: e.message.slice(0, 200) });
+  }
+});
+
+// Restaurar: reemplaza el volumen de datos por uno creado desde el snapshot. Antes se
+// respaldan los datos actuales. Se confirma escribiendo el identificador, como al eliminar.
+app.post('/api/tenants/:id/restaurar', async (req, res) => {
+  const t = getTenant(req.params.id);
+  if (!t) return err(res, 404, 'Tenant no encontrado');
+  if (t.estado !== 'activo') return err(res, 409, `Solo se puede restaurar un tenant activo (está "${t.estado}")`);
+  const { snapshot_id: snap, confirmacion } = req.body || {};
+  if (!/^snap-[0-9a-f]{8,17}$/.test(snap || '')) return err(res, 400, 'Indica el snapshot a restaurar (snap-...)');
+  if (confirmacion !== t.id) return err(res, 400, `Para confirmar escribe el identificador del tenant: "${t.id}"`);
+  const activa = operacionActiva(t.id);
+  if (activa) return err(res, 409, `El tenant ya tiene una operación en curso (#${activa.id} ${activa.tipo}: ${activa.estado})`);
+  let lista;
+  try { lista = await respaldos.listar(t.id, obtenerPlan(t.plan)); } catch (e) { return err(res, 502, 'No se pudieron consultar los respaldos en AWS'); }
+  const s = lista.find((x) => x.id === snap);
+  if (!s) return err(res, 404, 'Ese snapshot no es un respaldo de este tenant');
+  if (s.estado !== 'completed') return err(res, 409, `El snapshot todavía no está completo (${s.estado} ${s.progreso || ''})`);
+  res.status(202).json({ operacion: formatoOperacion(encolar(t.id, 'restaurar', req.usuario, null, { snapshot_id: snap, fecha_snapshot: s.fecha })) });
 });
 
 // Operaciones
@@ -183,7 +220,9 @@ app.post('/api/operaciones/:id/reintentar', (req, res) => {
   if (activa) return err(res, 409, `El tenant ya tiene una operación en curso (#${activa.id})`);
   const ultima = db.prepare('SELECT id FROM operaciones WHERE tenant_id = ? ORDER BY id DESC LIMIT 1').get(op.tenant_id);
   if (ultima.id !== op.id) return err(res, 409, 'Solo se puede reintentar la última operación del tenant');
-  res.status(202).json({ operacion: formatoOperacion(encolar(op.tenant_id, op.tipo, req.usuario, op.id)) });
+  // Los parámetros (p. ej. el snapshot a restaurar) se conservan al reintentar
+  res.status(202).json({ operacion: formatoOperacion(encolar(op.tenant_id, op.tipo, req.usuario, op.id,
+    op.parametros ? JSON.parse(op.parametros) : null)) });
 });
 
 // ---------- Frontend ----------

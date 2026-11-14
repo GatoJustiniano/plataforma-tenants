@@ -83,6 +83,9 @@ La API **no ejecuta** infraestructura: registra la operación y responde `202`. 
 | `GET /api/operaciones/:id?desde=N` | Paso actual, error comprensible y log saneado (RF-11) |
 | `POST /api/operaciones/:id/reintentar` | Reintenta una operación fallida sobre el mismo estado, sin duplicar recursos (RF-12) |
 | `GET /api/monitoreo?tenant=` | Reglas de alerta de Grafana y alertas activas por tenant (RF-29) |
+| `GET /api/tenants/:id/respaldos` | Snapshots del tenant: programados, a pedido y previos a restaurar (RF-19) |
+| `POST /api/tenants/:id/respaldar` | Respaldo a pedido |
+| `POST /api/tenants/:id/restaurar` | `{snapshot_id, confirmacion: "<id del tenant>"}`. Restaura el volumen de datos; antes respalda los datos actuales |
 
 Autenticación: si `PLATAFORMA_ADMIN_KEY` tiene valor, cada llamada debe enviar la cabecera `X-Admin-Key`. La cabecera `X-Usuario` queda registrada como quién pidió la operación.
 
@@ -97,6 +100,7 @@ Para ver las alertas en el panel, `GRAFANA_URL` del `.env` debe apuntar al Grafa
 - [Monitoreo y alertas](docs/monitoreo.md)
 - [Infraestructura de la plataforma, estado y permisos del worker](infra/README.md)
 - [Aislamiento entre tenants: evidencias](docs/aislamiento.md)
+- [Respaldos y restauración](docs/respaldos.md)
 
 ## Alcance de la demo
 

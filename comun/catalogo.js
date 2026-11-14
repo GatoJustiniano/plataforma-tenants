@@ -14,7 +14,7 @@ function obtenerPlan(id) {
 }
 
 // Variables que recibe el módulo tenant de asistencia-infra
-function variablesTenant(tenant, plan, { suspendido = false, appVersion } = {}) {
+function variablesTenant(tenant, plan, { suspendido = false, appVersion, snapshotDatos } = {}) {
   return {
     tenant_id: tenant.id,
     nombre: tenant.nombre, // título de la app del tenant
@@ -31,6 +31,7 @@ function variablesTenant(tenant, plan, { suspendido = false, appVersion } = {}) 
     },
     app_version: appVersion || tenant.app_version || 'main',
     suspendido,
+    ...(snapshotDatos ? { snapshot_datos: snapshotDatos } : {}), // solo al restaurar
   };
 }
 

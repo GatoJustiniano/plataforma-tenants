@@ -29,8 +29,9 @@ function crearMotor(nombre) {
         `-backend-config=key=tenants/${tenantId}/terraform.tfstate`], { cwd: dir, env });
     },
 
-    async apply(reg, dir, varFile) {
-      await reg.ejecutar(bin, ['apply', '-auto-approve', '-no-color', '-input=false', `-var-file=${varFile}`], { cwd: dir, env });
+    // extra: argumentos adicionales, p. ej. -replace=... al restaurar
+    async apply(reg, dir, varFile, extra = []) {
+      await reg.ejecutar(bin, ['apply', '-auto-approve', '-no-color', '-input=false', `-var-file=${varFile}`, ...extra], { cwd: dir, env });
     },
 
     async outputs(reg, dir) {

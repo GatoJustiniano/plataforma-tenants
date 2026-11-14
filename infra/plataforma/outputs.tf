@@ -38,3 +38,8 @@ output "ssm_grafana_token" {
   description = "Token de solo lectura que usa la API de la plataforma"
   value       = "${local.ssm_prefijo}/grafana-token"
 }
+
+output "politicas_respaldo" {
+  description = "Políticas de Data Lifecycle Manager por plan"
+  value       = { for k, p in aws_dlm_lifecycle_policy.respaldos : k => p.id }
+}

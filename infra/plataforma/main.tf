@@ -239,7 +239,7 @@ resource "aws_iam_role_policy" "worker" {
         Effect    = "Allow"
         Action    = "ec2:CreateTags"
         Resource  = "*"
-        Condition = { StringEquals = { "ec2:CreateAction" = ["RunInstances", "CreateVolume", "CreateSecurityGroup", "AuthorizeSecurityGroupIngress", "AuthorizeSecurityGroupEgress"] } }
+        Condition = { StringEquals = { "ec2:CreateAction" = ["RunInstances", "CreateVolume", "CreateSecurityGroup", "AuthorizeSecurityGroupIngress", "AuthorizeSecurityGroupEgress", "CreateSnapshot"] } }
       },
       {
         Sid    = "ModificarSoloTenants"
@@ -247,9 +247,25 @@ resource "aws_iam_role_policy" "worker" {
         Action = ["ec2:CreateTags", "ec2:DeleteTags", "ec2:TerminateInstances", "ec2:StopInstances",
           "ec2:StartInstances", "ec2:ModifyInstanceAttribute", "ec2:ModifyInstanceMetadataOptions",
           "ec2:ModifyInstanceCreditSpecification", "ec2:AttachVolume", "ec2:DetachVolume",
-        "ec2:DeleteVolume", "ec2:ModifyVolume", "ec2:DeleteSecurityGroup"]
+        "ec2:DeleteVolume", "ec2:ModifyVolume", "ec2:DeleteSecurityGroup", "ec2:DeleteSnapshot"]
         Resource  = "*"
         Condition = { StringEquals = { "aws:ResourceTag/Componente" = "tenant" } }
+      },
+      {
+        # Respaldo a pedido (RF-19): solo de volúmenes de tenants...
+        Sid       = "RespaldarVolumenTenant"
+        Effect    = "Allow"
+        Action    = "ec2:CreateSnapshot"
+        Resource  = "arn:aws:ec2:${var.region}:${var.aws_account_id}:volume/*"
+        Condition = { StringEquals = { "aws:ResourceTag/Componente" = "tenant" } }
+      },
+      {
+        # ...y el snapshot nace con el tag Componente=tenant (si no, no podría borrarlo después)
+        Sid       = "CrearSnapshotTenant"
+        Effect    = "Allow"
+        Action    = "ec2:CreateSnapshot"
+        Resource  = "arn:aws:ec2:${var.region}::snapshot/*"
+        Condition = { StringEquals = { "aws:RequestTag/Componente" = "tenant" } }
       },
       {
         Sid    = "SecretosTenants"
@@ -436,4 +452,78 @@ resource "aws_ssm_association" "ansible" {
     key    = "InstanceIds"
     values = [aws_instance.plataforma.id]
   }
+}
+
+# ---------- Respaldos programados (RF-19) ----------
+# Una política de AWS Data Lifecycle Manager por plan: respalda los volúmenes con el tag
+# Respaldo=<plan> (solo el volumen de datos de cada tenant) con la frecuencia y retención
+# del catálogo. Los respaldos a pedido y la restauración los hace el worker.
+
+locals {
+  # semanal: domingos; diario: todos los días. 06:00 UTC = 02:00 en Bolivia.
+  respaldos = { for p in local.catalogo.planes : p.id => {
+    frecuencia = p.operacion.respaldo
+    dias       = p.operacion.retencion_respaldos_dias
+  } }
+}
+
+# El nombre empieza por asistencia-plataforma-: el Deny del worker lo protege
+resource "aws_iam_role" "dlm" {
+  name = "${local.prefijo}-dlm"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "dlm.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "dlm" {
+  role       = aws_iam_role.dlm.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSDataLifecycleManagerServiceRole"
+}
+
+resource "aws_dlm_lifecycle_policy" "respaldos" {
+  for_each           = local.respaldos
+  description        = "Respaldos del plan ${each.key} - ${each.value.frecuencia} - ${each.value.dias} dias" # DLM: solo letras, numeros, espacios y guiones
+  execution_role_arn = aws_iam_role.dlm.arn
+  state              = "ENABLED"
+
+  policy_details {
+    resource_types = ["VOLUME"]
+    target_tags    = { Respaldo = each.key }
+
+    schedule {
+      name = "${each.value.frecuencia}-${each.value.dias}d"
+
+      create_rule {
+        # Diario: cada 24 h a las 06:00 UTC. Semanal: domingos a las 06:00 UTC.
+        interval        = each.value.frecuencia == "diario" ? 24 : null
+        interval_unit   = each.value.frecuencia == "diario" ? "HOURS" : null
+        times           = each.value.frecuencia == "diario" ? ["06:00"] : null
+        cron_expression = each.value.frecuencia == "semanal" ? "cron(0 6 ? * SUN *)" : null
+      }
+
+      retain_rule {
+        interval      = each.value.dias
+        interval_unit = "DAYS"
+      }
+
+      # Copia los tags del volumen (Tenant, Plan, Componente...): así la plataforma
+      # encuentra los snapshots de cada tenant y el worker puede restaurarlos.
+      copy_tags   = true
+      tags_to_add = { Origen = "programado" }
+    }
+  }
+
+  lifecycle {
+    precondition {
+      condition     = contains(["diario", "semanal"], each.value.frecuencia)
+      error_message = "operacion.respaldo del plan ${each.key} debe ser diario o semanal."
+    }
+  }
+
+  depends_on = [aws_iam_role_policy_attachment.dlm]
 }
