@@ -321,7 +321,7 @@ resource "aws_iam_role_policy" "worker" {
 }
 
 # Techo de permisos de los roles de los tenants: aunque alguien escribiera otra política en
-# un rol de tenant, este no podría hacer más que registrarse en SSM y leer secretos de tenants.
+# un rol de tenant, este no podría hacer más que registrarse en SSM y leer los secretos de su tenant.
 resource "aws_iam_policy" "limite_tenant" {
   name        = local.limite_tenant
   description = "Permissions boundary de los roles de los tenants de asistencia"
@@ -339,10 +339,12 @@ resource "aws_iam_policy" "limite_tenant" {
         Resource = "*"
       },
       {
-        Sid      = "SecretosTenants"
+        # Solo los parámetros de SU tenant (tag Tenant del rol). Hace falta aquí y no solo en la
+        # política del rol: AmazonSSMManagedInstanceCore concede ssm:GetParameter sobre "*".
+        Sid      = "SecretosDelPropioTenant"
         Effect   = "Allow"
         Action   = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"]
-        Resource = "arn:aws:ssm:${var.region}:${var.aws_account_id}:parameter/asistencia/*"
+        Resource = "arn:aws:ssm:${var.region}:${var.aws_account_id}:parameter/asistencia/$${aws:PrincipalTag/Tenant}/*"
       },
       {
         Sid       = "DescifrarSecretos"

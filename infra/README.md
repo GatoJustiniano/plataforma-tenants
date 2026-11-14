@@ -58,6 +58,6 @@ En la EC2, el worker ejecuta Terraform u OpenTofu con el **rol IAM de la instanc
 | `iam:PassRole` | Solo roles `asistencia-*` y solo hacia EC2 |
 | La propia plataforma | `Deny` explícito sobre su rol, su perfil y el borrado de sus secretos en SSM; tampoco puede quitar ni cambiar el boundary |
 
-El boundary `asistencia-limite-tenant` es el techo de cualquier rol de tenant: solo el agente de SSM y leer parámetros `/asistencia/*`, con `Deny` sobre `/asistencia/plataforma/*`. Aunque alguien lograra escribir otra política en un rol de tenant, la instancia no podría hacer nada más. Además, cada rol solo lee los parámetros de su propio tenant (política `leer-ssm-propio` del módulo).
+El boundary `asistencia-limite-tenant` es el techo de cualquier rol de tenant: el agente de SSM y leer **solo los parámetros de su propio tenant** (`/asistencia/${aws:PrincipalTag/Tenant}/*`, según el tag `Tenant` del rol), con `Deny` sobre `/asistencia/plataforma/*`. Aunque alguien lograra escribir otra política en un rol de tenant, la instancia no podría hacer nada más. Que el límite esté en el boundary es necesario: `AmazonSSMManagedInstanceCore` concede `ssm:GetParameter` sobre `*`, y con solo la política `leer-ssm-propio` un tenant podía leer el secreto de otro. Las pruebas están en [docs/aislamiento.md](../docs/aislamiento.md).
 
 Los identificadores `plataforma` y `limite` (y los que empiezan por ellos y un guion) están reservados en la API, porque los recursos de un tenant se llaman `asistencia-<id>-*`.

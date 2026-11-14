@@ -96,6 +96,7 @@ Para ver las alertas en el panel, `GRAFANA_URL` del `.env` debe apuntar al Grafa
 - [Catálogo de planes y límites](docs/planes.md)
 - [Monitoreo y alertas](docs/monitoreo.md)
 - [Infraestructura de la plataforma, estado y permisos del worker](infra/README.md)
+- [Aislamiento entre tenants: evidencias](docs/aislamiento.md)
 
 ## Alcance de la demo
 
