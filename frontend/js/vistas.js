@@ -50,7 +50,7 @@ const Vistas = {
           <tr class="clic" data-id="${esc(t.id)}">
             <td><strong>${esc(t.nombre)}</strong><br><small class="muted mono">${esc(t.id)}</small></td>
             <td>${esc(nombrePlan[t.plan] || t.plan)}</td><td>${esc(ENTORNOS[t.entorno] || t.entorno)}</td>
-            <td>${esc(MOTORES[t.motor]?.nombre || t.motor)}</td><td>${badge(t.estado)}</td>
+            <td>${esc(MOTORES[t.motor]?.nombre || t.motor)}</td><td>${badge(t.estado)}${t.retencion?.vencida ? ' <span class="badge mal" title="Suspendido más tiempo que la retención del plan">retención vencida</span>' : ''}</td>
             <td>${t.url ? `<a href="${esc(t.url)}" target="_blank" rel="noopener">${esc(t.url.replace('http://', ''))}</a>` : '<span class="muted">—</span>'}</td>
             <td><small>${fecha(t.actualizado_en)}</small></td>
           </tr>`).join('')}</tbody></table>`
@@ -249,6 +249,9 @@ const Vistas = {
         <div><span>Instancia</span><span class="mono">${esc(t.instance_id || '—')}</span></div>
         <div><span>Versión de la app</span>${esc(t.app_version || '—')}</div>
         <div><span>Datos</span>${p ? `${p.infra.data_volume_gb} GB · retención ${p.operacion.retencion_suspendido_dias} días` : '—'}</div>
+        ${t.retencion ? `<div><span>Suspendido desde</span>${fecha(t.retencion.desde)}<br>${t.retencion.vencida
+          ? '<span class="badge mal">retención vencida</span> <small class="muted">puedes eliminarlo</small>'
+          : `<small class="muted">datos garantizados hasta ${fecha(t.retencion.vence)}</small>`}</div>` : ''}
         <div><span>Creado</span>${fecha(t.creado_en)} <small class="muted">por ${esc(t.creado_por)}</small></div>
         <div><span>Actualizado</span>${fecha(t.actualizado_en)}</div>
       </div>

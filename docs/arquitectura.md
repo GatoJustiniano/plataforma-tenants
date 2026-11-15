@@ -1,146 +1,168 @@
 # Arquitectura: plataforma de tenants de Asistencia
 
-Borrador del entregable 3 ("Diagrama de arquitectura y flujo de creación de un tenant").
-Los diagramas están en Mermaid y GitHub los muestra directamente.
+Entregable 3: diagrama de arquitectura y flujo de creación de un tenant. Los diagramas están en Mermaid y GitHub los muestra directamente.
 
 ## 1. Vista general
 
 Hay dos planos:
 
-- **Plano de control (la plataforma):** una sola instancia. Aloja el panel de administración, la API, el worker que ejecuta los motores de IaC, la base de datos de la plataforma, Prometheus y Grafana.
-- **Plano de datos (los tenants):** cada institución tiene su propia EC2 (frontend + backend), su propio volumen de datos y su propio Security Group. Ningún tenant comparte cómputo ni base de datos con otro.
+- **Plano de control (la plataforma):** una EC2 `t3.small` con IP elástica (`infra/plataforma`). Aloja el panel web, la API, el worker que ejecuta los motores de IaC, la base de datos de la plataforma (SQLite), Prometheus, blackbox_exporter y Grafana. La configura Ansible.
+- **Plano de datos (los tenants):** cada institución tiene su propia EC2 (frontend y backend de la app), su propio volumen EBS de datos (SQLite), su propio Security Group, su propio rol IAM y sus propios secretos en SSM. Ningún tenant comparte cómputo, disco ni credenciales con otro.
 
 ```mermaid
 flowchart LR
-    admin([Admin plataforma])
-    tadmin([Admin tenant / docente / estudiante])
+    admin([Admin de la plataforma])
+    usuarios([Admin del tenant,<br/>docentes y estudiantes])
 
-    subgraph AWS["AWS us-east-1"]
-        subgraph CP["Plano de control (EC2 plataforma)"]
-            ui[Panel web<br/>Tenants, Planes, Monitoreo]
-            api[API plataforma<br/>Node + Express]
-            db[(BD plataforma<br/>tenants, planes,<br/>operaciones)]
-            worker[Worker de jobs<br/>terraform / tofu /<br/>pulumi / cloudformation]
-            prom[Prometheus]
-            graf[Grafana<br/>paneles + alertas]
+    subgraph AWS["AWS us-east-1 · VPC compartida 10.20.0.0/16"]
+        subgraph CP["EC2 de la plataforma (SG plataforma)"]
+            ui[Panel web :80]
+            api[API · Node + Express]
+            db[(BD plataforma<br/>tenants y operaciones)]
+            worker[Worker<br/>Terraform / OpenTofu]
+            prom[Prometheus<br/>+ blackbox]
+            graf[Grafana :3000<br/>paneles y alertas]
         end
 
-        subgraph SH["Servicios compartidos"]
-            s3[(S3: estado IaC<br/>+ lock)]
+        subgraph SH["Servicios de AWS"]
+            s3[(S3: estado IaC por tenant<br/>+ paquete de Ansible)]
             ssm[(SSM Parameter Store<br/>secretos por tenant)]
-            ami[AMI base<br/>creada con Packer]
+            ami[AMI de Packer]
+            dlm[Data Lifecycle Manager<br/>respaldos por plan]
         end
 
-        subgraph TA["Tenant A (plan Básico)"]
-            ea[EC2 app<br/>front + back]
+        subgraph TA["Tenant A (SG, rol IAM y secreto propios)"]
+            ea[EC2 app :80<br/>métricas :9100 :9101]
             va[(EBS datos<br/>SQLite)]
         end
-        subgraph TB["Tenant B (plan Estándar)"]
-            eb[EC2 app<br/>front + back]
-            vb[(EBS datos<br/>SQLite)]
+        subgraph TB["Tenant B"]
+            eb[EC2 app]
+            vb[(EBS datos)]
         end
     end
 
-    admin --> ui --> api
-    api --> db
-    api -- encola job --> worker
-    worker --> s3
-    worker --> ssm
-    worker -- crea / suspende / elimina --> TA
-    worker -- crea / suspende / elimina --> TB
-    worker -- Ansible --> ea
-    ami -. arranca desde .-> ea
-    ami -. arranca desde .-> eb
+    admin -- solo IPs de admin --> ui
+    admin -- solo IPs de admin --> graf
+    ui --> api --> db
+    worker -- toma operaciones --> db
+    worker -- estado + lock --> s3
+    worker -- crea / suspende / restaura / elimina --> TA
+    worker -- crea / suspende / restaura / elimina --> TB
+    ami -. arranque .-> ea
+    ami -. arranque .-> eb
+    ea -- cloud-init lee su secreto --> ssm
     ea --- va
     eb --- vb
-    prom -- scrape /metrics --> ea
-    prom -- scrape /metrics --> eb
+    dlm -- snapshots --> va
+    dlm -- snapshots --> vb
+    prom -- descubre por tags y mide --> ea
+    prom --> eb
     graf --> prom
-    api -- lee alertas --> graf
-    tadmin --> ea
-    tadmin --> eb
+    api -- token de solo lectura --> graf
+    usuarios -- HTTP :80 --> ea
+    usuarios --> eb
 ```
+
+**Red:** todos los tenants comparten una VPC con dos subredes públicas (`infra/red`) en lugar de tener una VPC cada uno, porque AWS limita a 5 VPC por región. El aislamiento lo dan los Security Groups: el de un tenant solo acepta el puerto 80 desde internet, y los puertos 9100, 9101 y 22 solo desde el SG de la plataforma. Ningún SG de tenant referencia a otro (ver [aislamiento.md](aislamiento.md)).
 
 ## 2. Flujo de creación de un tenant
 
 ```mermaid
 sequenceDiagram
-    actor A as Admin plataforma
+    actor A as Admin de la plataforma
     participant UI as Panel web
-    participant API as API plataforma
+    participant API as API
     participant DB as BD plataforma
-    participant W as Worker
-    participant AWS as AWS (S3, SSM, EC2)
+    participant W as Worker (EC2 plataforma)
+    participant AWS as AWS (S3, IAM, SSM, EC2)
     participant VM as EC2 del tenant
-    participant P as Prometheus/Grafana
+    participant P as Prometheus / Grafana
 
-    A->>UI: Wizard: datos + plan + entorno + motor IaC
-    UI->>API: POST /tenants
-    API->>DB: tenant (estado=aprovisionando) + operación (pendiente)
-    API-->>UI: 202 Accepted + id de operación
-    loop cada pocos segundos (RF-11)
-        UI->>API: GET /operaciones/:id
-        API-->>UI: paso actual + log sin secretos
+    A->>UI: Asistente: datos, plan, entorno y motor
+    UI->>API: POST /api/tenants
+    API->>DB: tenant (aprovisionando) + operación (pendiente)
+    API-->>UI: 202 + id de la operación
+    loop cada 2 s (RF-11)
+        UI->>API: GET /api/operaciones/:id?desde=N
+        API-->>UI: paso actual + log saneado
     end
-    W->>DB: toma el job (estado=en_curso)
-    W->>AWS: genera AdminKey y la guarda en SSM
-    W->>AWS: init + workspace tenant-id + apply (variables del plan)
-    AWS->>VM: SG + EBS + EC2 desde la AMI de Packer
-    VM->>VM: cloud-init: monta EBS, lee SSM, escribe .env, arranca servicio
-    W->>VM: Ansible: configuración posterior (agentes, versión de la app)
-    W->>VM: GET /api/health hasta responder 200
-    W->>DB: outputs (URL, instance id) + versiones app/plantilla/motor (RF-13)
-    W->>DB: tenant=activo, operación=exitosa (o fallida + error legible)
-    P->>VM: descubre la instancia por tags y empieza a medir
+    W->>DB: toma la operación (UPDATE ... RETURNING, atómico)
+    W->>W: clona asistencia-infra@main y escribe tenant.tfvars.json desde el catálogo
+    W->>AWS: init (estado tenants/<id>/terraform.tfstate en S3, lock nativo)
+    W->>AWS: apply con el rol IAM de la instancia
+    AWS->>AWS: SG + reglas, secreto en SSM, rol IAM con boundary, volumen EBS
+    AWS->>VM: EC2 desde la AMI de Packer, con cloud-init
+    VM->>VM: cloud-init: monta el EBS, lee su secreto de SSM, escribe /etc/asistencia.env, clona la app, arranca el servicio
+    W->>VM: GET /api/health hasta que responda 200
+    W->>DB: outputs (URL, instancia) + versiones (app, plantillas, motor, providers, AMI)
+    W->>DB: tenant activo, operación exitosa (o fallida con un error comprensible)
+    P->>VM: lo descubre por tags en menos de 1 min y empieza a medir
 ```
 
-Si el apply falla, la operación queda `fallida` con el error. Reintentar (RF-12) vuelve a correr `apply` sobre **el mismo workspace o stack**. El motor compara el estado guardado con lo que existe en AWS y solo crea lo que falta, así que no duplica recursos.
+Si el `apply` falla, la operación queda `fallida` con un mensaje comprensible ([worker/errores.js](../worker/errores.js)). **Reintentar** (RF-12) vuelve a ejecutar `apply` sobre **el mismo estado** en S3: el motor compara el estado con lo que existe en AWS y solo crea lo que falta. Se comprobó dos veces con fallos reales (un permiso IAM que faltaba y un tipo de instancia que no admite el plan gratuito de AWS).
 
 ## 3. Ciclo de vida del tenant
 
 ```mermaid
 stateDiagram-v2
     [*] --> aprovisionando: crear
-    aprovisionando --> activo: apply OK + health OK
+    aprovisionando --> activo: apply + health OK
     aprovisionando --> fallido: error
     fallido --> aprovisionando: reintentar
     activo --> suspendiendo: suspender
     suspendiendo --> suspendido: EC2 detenida, EBS conservado
     suspendido --> reanudando: reanudar
     reanudando --> activo: EC2 arrancada + health OK
+    activo --> restaurando: restaurar (con confirmación)
+    restaurando --> activo: volumen desde el snapshot + health OK
+    restaurando --> fallido: error
     activo --> eliminando: eliminar (tras plan -destroy y confirmación)
     suspendido --> eliminando: eliminar
+    fallido --> eliminando: eliminar
     eliminando --> eliminado: destroy OK
     eliminado --> [*]
 ```
+
+El respaldo a pedido no cambia el estado del tenant. Todas las operaciones quedan en el historial con quién la pidió, cuándo, el resultado, el log y las versiones usadas (vista *Auditoría*).
 
 ## 4. Función de cada herramienta
 
 | Herramienta | Qué hace en esta arquitectura |
 |---|---|
-| **Terraform / OpenTofu** | Motor principal. Un mismo módulo `tenant` (SG, EBS, EC2) con un workspace por tenant y el estado en S3. OpenTofu usa el mismo HCL; solo cambia el binario que llama el worker (RF-08). También crea el plano de control. |
-| **Pulumi** | Segunda implementación reducida del stack de un tenant (un stack de Pulumi por tenant), para comparar con Terraform. |
-| **CloudFormation** | Segunda implementación reducida: un stack por tenant (`asistencia-<tenant>`), a partir de las plantillas que ya existen. |
-| **Packer** | Construye la AMI base: Amazon Linux 2023, Node, la app en una versión fija, node_exporter y la unidad systemd. Así el arranque es rápido y repetible. |
-| **cloud-init** | Configuración del primer arranque de cada tenant: monta el volumen de datos, lee los secretos del tenant desde SSM, escribe `.env` y arranca el servicio. |
-| **Ansible** | Configuración posterior: aplica cambios a VMs que ya existen (versión de la app, agentes, ajustes del plan) sin recrearlas. |
-| **Prometheus + Grafana** | Prometheus descubre las EC2 por tags (`Tenant`, `Entorno`, `Plan`) y mide CPU, memoria, disponibilidad y métricas de la app. Grafana muestra los paneles por tenant y entorno y dispara las alertas; la plataforma las consulta por la API de Grafana (RF-29). |
+| **Terraform** | Motor principal. El módulo `tenant` de `asistencia-infra` crea todo lo de un tenant: SG, secreto en SSM, rol IAM, volumen EBS y EC2. Cada tenant tiene su propio estado en S3. También crea la plataforma: `infra/bootstrap` (bucket del estado), `infra/red` (VPC compartida) e `infra/plataforma` (EC2, IAM, respaldos). |
+| **OpenTofu** | El mismo HCL que Terraform; el worker solo cambia el binario (`tofu`). Se probó creando un tenant con OpenTofu 1.13.9, que usa los providers de `registry.opentofu.org` y el mismo bucket de estado. |
+| **Pulumi / CloudFormation** | No están integrados en el worker. El enunciado los pide como "segunda implementación pequeña **o comparación técnica**"; la comparación está en la sección 6. En `asistencia-infra` hay versiones del práctico anterior, que no son compatibles con el cloud-init actual. |
+| **Packer** | Construye la AMI de los tenants (`asistencia-tenant-<fecha>`, tag `Rol=ami-tenant`): Amazon Linux 2023, Node.js, node_exporter y la caché de npm de la app. No tiene datos ni secretos. Con ella un tenant arranca en unos 2 minutos. |
+| **cloud-init** | Primer arranque de cada EC2 de tenant: monta el volumen de datos (lo formatea solo si está vacío), lee el secreto del tenant desde SSM con el rol de la instancia, escribe la configuración de la app (incluido el nombre de la institución), clona la app en la versión pedida y arranca el servicio. También prepara la EC2 de la plataforma para ejecutar Ansible. |
+| **Ansible** | Configuración posterior de la **EC2 de la plataforma**: Prometheus, blackbox_exporter, Grafana (datasource, dashboard y alertas como código), y el portal, la API y el worker (Node, Terraform, OpenTofu, servicios systemd). Terraform sube el playbook a S3; una asociación de SSM lo vuelve a aplicar cuando cambia, sin SSH y sin recrear la instancia. Los tenants no usan Ansible: son inmutables y se recrean desde la AMI y cloud-init. |
+| **Prometheus + Grafana** | Prometheus descubre las EC2 de los tenants por tags (`Tenant`, `Entorno`, `Plan`) y las mide con un intervalo según el plan. Grafana muestra el dashboard por tenant y entorno y evalúa 7 reglas de alerta. La plataforma lee las alertas por la API de Grafana con un token de solo lectura (RF-29). |
+| **AWS Data Lifecycle Manager** | Respaldos programados: una política por plan respalda el volumen de datos de cada tenant con la frecuencia y la retención del catálogo. |
 
 ## 5. Decisiones y requisitos no funcionales
 
-- **Aislamiento:** cada tenant tiene su propia EC2, su propio volumen de datos y su propio Security Group. El SG solo permite HTTP desde internet y los puertos de métricas desde el SG de la plataforma; no hay tráfico entre tenants.
-- **Red compartida:** todos los tenants usan una sola VPC con subred pública, en vez de una VPC por tenant. AWS limita a 5 VPC por región por defecto, y el aislamiento se logra con los Security Groups.
-- **Secretos:** se guardan en SSM Parameter Store (SecureString) bajo `/asistencia/<tenant>/...`. No van en tfvars, en el repo ni en los logs; el worker filtra los valores sensibles antes de guardar la salida del motor.
-- **Estado del motor:** se guarda en un bucket S3 con cifrado y versionado, bloqueo de acceso público y lock nativo de S3. Cada tenant usa la clave `tenants/<id>/terraform.tfstate`, y el acceso está restringido al rol IAM del worker.
-- **Trabajos en segundo plano:** la API solo encola trabajos. El worker los ejecuta de uno en uno por tenant y guarda el historial de cada operación (quién, cuándo, resultado y log).
-- **Suspensión:** se detiene la EC2 y se conserva el EBS de datos; solo se paga el disco. Los datos se mantienen según la política de retención del plan.
-- **Costos:** la plataforma puede destruir todos los tenants de prueba con una operación; para la demo se usan t3.micro.
+- **Aislamiento:** cada tenant tiene su EC2, su volumen, su SG, su rol IAM y sus secretos. El rol solo puede leer los parámetros de su tenant, y lo garantiza un *permissions boundary* basado en el tag `Tenant` del rol. Evidencias en [aislamiento.md](aislamiento.md).
+- **Secretos:** nunca están en el código ni en los repositorios. Terraform los genera y los guarda en SSM (SecureString). La instancia los lee con su rol, y el log de cada operación se sanea antes de guardarse ([comun/sanitizar.js](../comun/sanitizar.js)).
+- **Credenciales del worker:** en la EC2 usa el rol IAM de la instancia, sin claves. Solo puede modificar recursos con el tag `Componente=tenant` y no puede tocar la plataforma ([infra/README.md](../infra/README.md#permisos-del-worker)).
+- **Estado del motor:** en S3, cifrado, versionado, sin acceso público y con lock nativo (`use_lockfile`). Hay una clave por tenant ([infra/README.md](../infra/README.md#cómo-se-guarda-y-protege-el-estado)).
+- **Trabajos en segundo plano:** la API solo registra la operación y responde `202`. El worker toma una operación a la vez, de forma atómica, y un candado impide que corran dos workers.
+- **Operaciones repetibles:** todas son un `apply` idempotente sobre el mismo estado; reintentar no duplica recursos.
+- **Suspensión:** se detiene la EC2 y se conserva el volumen de datos, así que solo se pagan los discos. La retención por plan está en [planes.md](planes.md).
+- **Base de datos:** SQLite en un volumen EBS cifrado por tenant, montado en `/var/lib/asistencia`. La app no cambia (RF-21) y el plan define el tamaño del volumen.
+- **Respaldos:** snapshots del volumen de datos, programados con DLM o a pedido. Restaurar reemplaza el volumen, después de un respaldo de seguridad ([respaldos.md](respaldos.md)).
+- **Costos:** cada tenant se puede suspender o eliminar desde el panel; la guía de operación explica cómo apagar todo ([operacion.md](operacion.md#costos-y-apagado)).
 
-- **Base de datos (decidido):** SQLite en un volumen EBS dedicado a cada tenant, cifrado y montado en `/var/lib/asistencia`. La app no cambia (RF-21) y el plan define el tamaño del volumen.
-- **Alcance de la demo (decidido):** de 3 a 4 tenants. La cuota de la cuenta es de 16 vCPU On-Demand: con instancias t3.micro/small (2 vCPU cada una), 4 tenants y la plataforma suman 10 vCPU.
+## 6. Comparación técnica de los motores
 
-Detalle de cómo se protege el estado: [infra/README.md](../infra/README.md).
+El enunciado admite, para Pulumi y CloudFormation, "segunda implementación pequeña o comparación técnica con el motor principal". Esta es la comparación, aplicada a lo que necesita esta plataforma:
 
-## 6. Fase final
+| Criterio | Terraform / OpenTofu (implementado) | Pulumi | CloudFormation |
+|---|---|---|---|
+| Lenguaje | HCL declarativo | TypeScript, Python, Go… (lenguajes generales) | YAML o JSON declarativo |
+| Estado | Archivo en S3 por tenant, con lock nativo de S3 | Backend propio (Pulumi Cloud) o S3 (`pulumi login s3://`), un stack por tenant | Lo guarda AWS (un stack por tenant); no hay archivo que proteger |
+| Reintento sin duplicar (RF-12) | `apply` sobre el mismo estado | `pulumi up` sobre el mismo stack | Si la creación falla, el stack queda en `ROLLBACK_COMPLETE` y hay que borrarlo antes de reintentar (salvo que se cree con `--disable-rollback`) |
+| Previsualizar la eliminación (RF-18) | `plan -destroy`, legible y en JSON | `pulumi preview --destroy` | No tiene vista previa del borrado: habría que listar los recursos del stack (`list-stack-resources`) |
+| Multi-nube | Sí (providers) | Sí | Solo AWS |
+| Secretos | Variables `sensitive`; el valor queda en el estado, que por eso se trata como secreto | Cifra los secretos dentro del estado | Parámetros `NoEcho` y referencias dinámicas a SSM |
+| Ajuste a esta plataforma | El worker ya lo usa; el mismo HCL sirve para dos motores | Sumaría Node/npm y el CLI de Pulumi al worker | Solo necesita el AWS CLI, pero el borrado y los reintentos son más rígidos |
 
-- Respaldar y restaurar (RF-19, entregable 6) con snapshots del volumen de datos de cada tenant, según la política de cada plan en [planes.md](planes.md).
+Por eso se eligió **Terraform como motor principal y OpenTofu como segundo motor real**: comparten plantillas, estado y comportamiento, y con eso se puede elegir el motor (RF-08) entre dos opciones probadas. Pulumi y CloudFormation aparecen deshabilitados en el asistente de creación.

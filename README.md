@@ -95,6 +95,8 @@ Para ver las alertas en el panel, `GRAFANA_URL` del `.env` debe apuntar al Grafa
 
 ## Documentación
 
+- [**Matriz de requisitos**: cada requisito del enunciado, dónde está y cómo se probó](docs/requisitos.md)
+- [**Guía de operación**: levantar, operar tenants, diagnosticar, costos y guion de la demo](docs/operacion.md)
 - [Arquitectura y flujo de creación de un tenant](docs/arquitectura.md)
 - [Catálogo de planes y límites](docs/planes.md)
 - [Monitoreo y alertas](docs/monitoreo.md)

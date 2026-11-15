@@ -65,6 +65,19 @@ function encolar(tenantId, tipo, usuario, reintentoDe = null, parametros = null)
   return db.prepare('SELECT * FROM operaciones WHERE id = ?').get(r.lastInsertRowid);
 }
 
+// Retención de un tenant suspendido (RF-17): desde cuándo está suspendido y si ya pasó el
+// plazo del plan. La plataforma solo lo marca; borrarlo sigue siendo manual, con confirmación.
+function conRetencion(t) {
+  if (t.estado !== 'suspendido') return { ...t, retencion: null };
+  const dias = obtenerPlan(t.plan)?.operacion?.retencion_suspendido_dias;
+  const op = db.prepare(`SELECT terminada_en FROM operaciones WHERE tenant_id = ? AND tipo = 'suspender'
+    AND estado = 'exitosa' ORDER BY id DESC LIMIT 1`).get(t.id);
+  const desde = op?.terminada_en || t.actualizado_en;
+  if (!dias || !desde) return { ...t, retencion: null };
+  const vence = new Date(new Date(desde).getTime() + dias * 864e5).toISOString();
+  return { ...t, retencion: { dias, desde, vence, vencida: new Date(vence) < new Date() } };
+}
+
 // ---------- Rutas ----------
 app.get('/api/salud', (req, res) => res.json({ ok: true, hora: ahora() }));
 
@@ -80,14 +93,14 @@ app.get('/api/tenants', (req, res) => {
   }
   if (!req.query.estado && req.query.incluir_eliminados !== 'true') filtros.push("estado != 'eliminado'");
   const where = filtros.length ? `WHERE ${filtros.join(' AND ')}` : '';
-  res.json(db.prepare(`SELECT * FROM tenants ${where} ORDER BY creado_en DESC`).all(...args));
+  res.json(db.prepare(`SELECT * FROM tenants ${where} ORDER BY creado_en DESC`).all(...args).map(conRetencion));
 });
 
 app.get('/api/tenants/:id', (req, res) => {
   const t = getTenant(req.params.id);
   if (!t) return err(res, 404, 'Tenant no encontrado');
   const ops = db.prepare('SELECT * FROM operaciones WHERE tenant_id = ? ORDER BY id DESC LIMIT 50').all(t.id);
-  res.json({ ...t, plan_detalle: obtenerPlan(t.plan), operaciones: ops.map((o) => formatoOperacion(o)) });
+  res.json({ ...conRetencion(t), plan_detalle: obtenerPlan(t.plan), operaciones: ops.map((o) => formatoOperacion(o)) });
 });
 
 // Crear tenant (RF-07, RF-08)
