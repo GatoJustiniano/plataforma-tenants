@@ -103,6 +103,18 @@ resource "aws_vpc_security_group_ingress_rule" "portal" {
   cidr_ipv4         = each.value
 }
 
+# Acceso desde cualquier IP (acceso_publico = true): para demos. El portal y Grafana siguen
+# pidiendo su clave, pero por HTTP la clave viaja sin cifrar. Para cerrarlo: acceso_publico = false.
+resource "aws_vpc_security_group_ingress_rule" "publico" {
+  for_each          = var.acceso_publico ? { portal = 80, grafana = 3000 } : {}
+  security_group_id = data.aws_security_group.plataforma.id
+  description       = "Acceso publico (${each.key}), activado con acceso_publico"
+  ip_protocol       = "tcp"
+  from_port         = each.value
+  to_port           = each.value
+  cidr_ipv4         = "0.0.0.0/0"
+}
+
 # ---------- Secretos ----------
 
 # Clave de administrador del portal (cabecera X-Admin-Key). Ansible la pasa a la API.

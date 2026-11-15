@@ -50,3 +50,9 @@ variable "app_version" {
   type        = string
   default     = "main"
 }
+
+variable "acceso_publico" {
+  description = "true abre el portal (80) y Grafana (3000) a cualquier IP, solo por HTTP. Para demos; lo normal es false y usar cidrs_admin."
+  type        = bool
+  default     = false
+}

@@ -24,7 +24,9 @@ aws ssm get-parameter --with-decryption --name /asistencia/plataforma/grafana-ad
 aws ssm get-parameter --with-decryption --name /asistencia/<tenant>/admin-key --query Parameter.Value --output text
 ```
 
-El portal y Grafana **solo se abren desde las IPs de `cidrs_admin`** (ver [Cambiar la IP de administración](#cambiar-la-ip-de-administración)).
+El portal y Grafana **solo se abren desde las IPs de `cidrs_admin`** (ver [Cambiar la IP de administración](#cambiar-la-ip-de-administración)), salvo que esté activado el acceso público.
+
+**Acceso público (para demos):** con `acceso_publico = true` en `infra/plataforma/terraform.tfvars` y un `terraform apply`, el portal (80) y Grafana (3000) se abren a cualquier IP. Siguen pidiendo su clave, pero **por HTTP la clave viaja sin cifrar**: conviene usarlo solo durante la demo, no entrar desde redes públicas y, al terminar, volver a `false` y aplicar (solo se quitan dos reglas del SG).
 
 ## Levantar todo desde cero
 
