@@ -21,3 +21,5 @@ worker/trabajos/
 
 # Worker
 worker/.cache/
+
+.vscode
