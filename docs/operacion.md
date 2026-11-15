@@ -74,7 +74,7 @@ K=$(aws ssm get-parameter --with-decryption --name /asistencia/plataforma/admin-
 
 ### Crear
 
-Panel: **+ Crear tenant**. Son tres pasos: datos de la institución (nombre, identificador, correo, entorno), plan y motor (Terraform u OpenTofu), y revisión.
+Panel: **+ Crear tenant**. Son tres pasos: datos de la institución (nombre, identificador, correo, entorno), plan y motor (Terraform, OpenTofu o CloudFormation), y revisión. Los tenants de CloudFormation se ven como un stack `asistencia-<id>` en la consola de CloudFormation y no permiten restaurar.
 
 ```bash
 curl -X POST $P/api/tenants -H "X-Admin-Key: $K" -H "Content-Type: application/json" -d '{"id":"colegio-x","nombre":"Colegio X","contacto_email":"admin@colegio-x.edu","entorno":"dev","plan":"basico","motor":"terraform"}'
@@ -246,7 +246,7 @@ Unos 15 minutos, con la plataforma encendida:
 
 1. **Arquitectura:** el diagrama de [arquitectura.md](arquitectura.md) y la función de cada herramienta.
 2. **Planes:** la vista *Planes* (el catálogo sale de `planes.json`).
-3. **Crear** dos tenants con planes y motores distintos (uno con Terraform y otro con OpenTofu), y seguir el progreso en vivo.
+3. **Crear** tenants con planes y motores distintos (Terraform, OpenTofu y CloudFormation), y seguir el progreso en vivo. Mostrar el stack en la consola de CloudFormation.
 4. **App del tenant:** abrir su URL. Muestra el nombre de la institución y los datos de ejemplo.
 5. **Grafana:** el dashboard filtrado por tenant y entorno. Provocar *Servicio caído* y verlo en Grafana y en la vista *Monitoreo* del panel.
 6. **Suspender y reanudar:** los datos se conservan.

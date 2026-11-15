@@ -28,7 +28,7 @@ Los tres repositorios: **plataforma-tenants** (panel, API, worker, infraestructu
 | Req. | Estado | Implementación | Evidencia |
 |---|---|---|---|
 | RF-07 Crear con nombre, id, contacto, entorno y plan | ✅ | Asistente de 3 pasos y `POST /api/tenants` (id validado y único; los ids `plataforma` y `limite` están reservados) | Tenants creados en los tres planes |
-| RF-08 Elegir el motor | ◐ | **Terraform y OpenTofu** funcionan con las mismas plantillas. Pulumi y CloudFormation aparecen deshabilitados; en su lugar hay una comparación técnica, que el enunciado (sección 4) admite | `colegio-tofu` creado con OpenTofu 1.13.9; [arquitectura.md §6](arquitectura.md#6-comparación-técnica-de-los-motores) |
+| RF-08 Elegir el motor | ✅ | **Terraform**, **OpenTofu** (mismas plantillas) y **CloudFormation** (implementación reducida, sin restaurar). Pulumi solo tiene comparación técnica | `colegio-tofu` con OpenTofu 1.13.9; `colegio-cfn` con CloudFormation: crear, suspender, reanudar y eliminar; [arquitectura.md §6](arquitectura.md#6-comparación-técnica-de-los-motores) |
 | RF-09 Recursos para frontend, backend y BD | ✅ | Módulo `tenant`: EC2, volumen EBS de datos, SG, rol IAM y secreto en SSM | [asistencia-infra/terraform](../../asistencia-infra/terraform) |
 | RF-10 Desplegar la app y conectarla a su BD | ✅ | cloud-init monta el volumen, escribe `DB_PATH=/var/lib/asistencia/asistencia.db` y arranca la app | `/api/health` 200 en cada creación |
 | RF-11 Progreso, resultado y errores comprensibles | ✅ | Paso actual y log en vivo; [worker/errores.js](../worker/errores.js) traduce los errores del motor | "El worker no tiene permisos IAM…", "La cuenta AWS está en el plan gratuito…" |
@@ -70,7 +70,7 @@ El enunciado salta de RF-21 a RF-25: no existen RF-22 a RF-24.
 | Herramienta | Estado | Dónde |
 |---|---|---|
 | Terraform / OpenTofu | ✅ | `asistencia-infra/terraform`, `infra/*` |
-| Pulumi y CloudFormation | ◐ | Comparación técnica en [arquitectura.md §6](arquitectura.md#6-comparación-técnica-de-los-motores), que el enunciado acepta ("o comparación técnica"). No hay una segunda implementación funcionando |
+| Pulumi y CloudFormation | ✅ | **CloudFormation:** segunda implementación pequeña ([asistencia-infra/cloudformation/tenant.yaml](../../asistencia-infra/cloudformation/tenant.yaml)). **Pulumi:** comparación técnica en [arquitectura.md §6](arquitectura.md#6-comparación-técnica-de-los-motores) |
 | cloud-init | ✅ | `asistencia-infra/cloud-init`, `infra/plataforma/cloud-init.yaml` |
 | Ansible | ✅ | `ansible/`: configuración posterior de la EC2 de la plataforma |
 | Packer | ✅ | `asistencia-infra/packer`: AMI de los tenants |
@@ -118,7 +118,7 @@ El enunciado salta de RF-21 a RF-25: no existen RF-22 a RF-24.
 
 ## Pendiente y fuera de alcance
 
-- **RF-08 completo:** Pulumi o CloudFormation como motor funcionando en el worker (hoy solo hay comparación técnica).
+- **Pulumi:** solo comparación técnica; CloudFormation no permite restaurar (reducido).
 - **RF-06 y RF-15** (tachados): cambio de plan y una operación propia de "actualizar".
 - **Portal sin HTTPS:** se abre solo desde las IPs de administración y pide clave, pero la clave viaja sin cifrar.
 - **Administrador del tenant:** administra su institución en la app (panel docente), pero el estado de sus servicios (Grafana y el panel) solo lo ve el administrador de la plataforma.

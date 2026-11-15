@@ -85,4 +85,4 @@ async function purgarVencidos() {
   return borrados;
 }
 
-module.exports = { listar, crear, purgarVencidos, volumenDatos };
+module.exports = { listar, crear, purgarVencidos, volumenDatos, aws };

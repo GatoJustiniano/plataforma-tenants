@@ -9,6 +9,7 @@ const { Registro } = require('./registro');
 const { prepararPlantillas } = require('./plantillas');
 const { mensajeError } = require('./errores');
 const { crearMotor } = require('./motores/terraform');
+const { crearMotorCfn } = require('./motores/cloudformation');
 const respaldos = require('../comun/respaldos');
 
 // En la EC2 el código es de solo lectura: las carpetas de trabajo van en TRABAJOS_DIR (/var/lib/plataforma)
@@ -20,7 +21,8 @@ const HEALTH_TIMEOUT_S = Number(process.env.HEALTH_TIMEOUT_S) || 600;
 const MOTORES = {
   terraform: () => crearMotor('terraform'),
   opentofu: () => crearMotor('opentofu'),
-  // pulumi y cloudformation: se agregan como implementaciones reducidas más adelante
+  cloudformation: () => crearMotorCfn(), // implementación reducida: sin restaurar
+  // pulumi: solo comparación técnica (docs/arquitectura.md)
 };
 
 const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -78,10 +80,11 @@ async function ejecutar(op) {
 
     reg.paso('Preparando plantillas');
     versiones.plantillas = await prepararPlantillas(dir, reg);
-    const raiz = path.join(dir, 'terraform');
+    const raiz = path.join(dir, motor.carpeta || 'terraform'); // carpeta de asistencia-infra de cada motor
     const suspendido = op.tipo === 'suspender';
     const restaurar = op.tipo === 'restaurar';
     if (restaurar && !/^snap-[0-9a-f]+$/.test(parametros.snapshot_id || '')) throw new Error('Falta el snapshot a restaurar');
+    if (restaurar && motor.nombre === 'cloudformation') throw new Error('Restaurar solo está disponible con Terraform u OpenTofu');
     fs.writeFileSync(path.join(raiz, 'tenant.tfvars.json'),
       JSON.stringify(variablesTenant(tenant, plan, { suspendido, snapshotDatos: restaurar ? parametros.snapshot_id : null }), null, 2));
 
@@ -92,7 +95,7 @@ async function ejecutar(op) {
     if (op.tipo === 'plan_eliminar') {
       reg.paso('Calculando qué se eliminará');
       const recursos = await motor.planDestroy(reg, raiz, 'tenant.tfvars.json');
-      const datos = recursos.filter((r) => ['aws_ebs_volume', 'aws_ssm_parameter'].includes(r.tipo));
+      const datos = recursos.filter((r) => ['aws_ebs_volume', 'aws_ssm_parameter'].includes(r.tipo)); // el motor CloudFormation usa los mismos nombres
       terminar(op, 'esperando_confirmacion', {
         paso: `Esperando confirmación: se eliminarán ${recursos.length} recursos`,
         resultado: { recursos, datos, aviso: 'El volumen de datos (base SQLite) y los secretos del tenant se borrarán de forma permanente.' },

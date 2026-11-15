@@ -252,6 +252,24 @@ resource "aws_iam_role_policy" "worker" {
         Condition = { StringEquals = { "aws:ResourceTag/Componente" = "tenant" } }
       },
       {
+        # Motor CloudFormation (RF-08): solo los stacks de tenants (asistencia-<id>) y los change sets
+        # que crea "aws cloudformation deploy". Los recursos del stack se crean con estos mismos permisos.
+        Sid    = "StacksTenants"
+        Effect = "Allow"
+        Action = ["cloudformation:CreateStack", "cloudformation:UpdateStack", "cloudformation:DeleteStack",
+          "cloudformation:DescribeStacks", "cloudformation:DescribeStackEvents", "cloudformation:ListStackResources",
+          "cloudformation:CreateChangeSet", "cloudformation:ExecuteChangeSet", "cloudformation:DescribeChangeSet",
+        "cloudformation:DeleteChangeSet", "cloudformation:GetTemplate", "cloudformation:TagResource"]
+        Resource = ["arn:aws:cloudformation:${var.region}:${var.aws_account_id}:stack/asistencia-*/*",
+        "arn:aws:cloudformation:${var.region}:${var.aws_account_id}:changeSet/awscli-cloudformation-package-deploy-*/*"]
+      },
+      {
+        Sid      = "ValidarPlantillas"
+        Effect   = "Allow"
+        Action   = ["cloudformation:ValidateTemplate", "cloudformation:GetTemplateSummary"]
+        Resource = "*"
+      },
+      {
         # Respaldo a pedido (RF-19): solo de volúmenes de tenants...
         Sid       = "RespaldarVolumenTenant"
         Effect    = "Allow"
@@ -293,7 +311,7 @@ resource "aws_iam_role_policy" "worker" {
         Sid    = "GestionarRolesTenants"
         Effect = "Allow"
         Action = ["iam:GetRole", "iam:DeleteRole", "iam:TagRole", "iam:UntagRole", "iam:UpdateRole",
-          "iam:UpdateAssumeRolePolicy", "iam:GetRolePolicy", "iam:ListRolePolicies",
+          "iam:UpdateAssumeRolePolicy", "iam:GetRolePolicy", "iam:ListRolePolicies", "iam:ListRoleTags",
         "iam:ListAttachedRolePolicies", "iam:ListInstanceProfilesForRole"]
         Resource = "arn:aws:iam::${var.aws_account_id}:role/asistencia-*"
       },

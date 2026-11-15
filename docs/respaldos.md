@@ -38,7 +38,7 @@ Los snapshots de EBS son *crash-consistent*: equivalen al disco tras un corte de
 
 ## Restaurar
 
-Desde el detalle del tenant, en **Respaldos → Restaurar…**: se elige el snapshot y se confirma escribiendo el identificador del tenant, como al eliminar (RF-18). Solo se permite con el tenant activo y sin otra operación en curso.
+Desde el detalle del tenant, en **Respaldos → Restaurar…**: se elige el snapshot y se confirma escribiendo el identificador del tenant, como al eliminar (RF-18). Solo se permite con el tenant activo, sin otra operación en curso y creado con Terraform u OpenTofu. Los tenants de CloudFormation se respaldan igual, pero la implementación reducida no restaura.
 
 El worker:
 

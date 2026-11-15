@@ -171,6 +171,7 @@ app.post('/api/tenants/:id/restaurar', async (req, res) => {
   const t = getTenant(req.params.id);
   if (!t) return err(res, 404, 'Tenant no encontrado');
   if (t.estado !== 'activo') return err(res, 409, `Solo se puede restaurar un tenant activo (está "${t.estado}")`);
+  if (t.motor === 'cloudformation') return err(res, 409, 'Restaurar solo está disponible para tenants creados con Terraform u OpenTofu');
   const { snapshot_id: snap, confirmacion } = req.body || {};
   if (!/^snap-[0-9a-f]{8,17}$/.test(snap || '')) return err(res, 400, 'Indica el snapshot a restaurar (snap-...)');
   if (confirmacion !== t.id) return err(res, 400, `Para confirmar escribe el identificador del tenant: "${t.id}"`);

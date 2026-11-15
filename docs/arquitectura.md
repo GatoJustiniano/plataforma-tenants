@@ -19,7 +19,7 @@ flowchart LR
             ui[Panel web :80]
             api[API · Node + Express]
             db[(BD plataforma<br/>tenants y operaciones)]
-            worker[Worker<br/>Terraform / OpenTofu]
+            worker[Worker<br/>Terraform / OpenTofu /<br/>CloudFormation]
             prom[Prometheus<br/>+ blackbox]
             graf[Grafana :3000<br/>paneles y alertas]
         end
@@ -131,7 +131,8 @@ El respaldo a pedido no cambia el estado del tenant. Todas las operaciones queda
 |---|---|
 | **Terraform** | Motor principal. El módulo `tenant` de `asistencia-infra` crea todo lo de un tenant: SG, secreto en SSM, rol IAM, volumen EBS y EC2. Cada tenant tiene su propio estado en S3. También crea la plataforma: `infra/bootstrap` (bucket del estado), `infra/red` (VPC compartida) e `infra/plataforma` (EC2, IAM, respaldos). |
 | **OpenTofu** | El mismo HCL que Terraform; el worker solo cambia el binario (`tofu`). Se probó creando un tenant con OpenTofu 1.13.9, que usa los providers de `registry.opentofu.org` y el mismo bucket de estado. |
-| **Pulumi / CloudFormation** | No están integrados en el worker. El enunciado los pide como "segunda implementación pequeña **o comparación técnica**"; la comparación está en la sección 6. En `asistencia-infra` hay versiones del práctico anterior, que no son compatibles con el cloud-init actual. |
+| **CloudFormation** | Segunda implementación reducida ([asistencia-infra/cloudformation/tenant.yaml](../../asistencia-infra/cloudformation/tenant.yaml)), un stack `asistencia-<id>` por tenant: mismo SG, rol IAM con boundary, volumen y EC2, con el mismo cloud-init. Permite crear, suspender, reanudar, eliminar con previsualización y reintentar; restaurar queda solo para Terraform/OpenTofu. Lo que CloudFormation no hace (el secreto SecureString, el estado de la instancia) lo resuelve el motor del worker ([worker/motores/cloudformation.js](../worker/motores/cloudformation.js)). |
+| **Pulumi** | No está integrado: se cubre con la comparación técnica de la sección 6. |
 | **Packer** | Construye la AMI de los tenants (`asistencia-tenant-<fecha>`, tag `Rol=ami-tenant`): Amazon Linux 2023, Node.js, node_exporter y la caché de npm de la app. No tiene datos ni secretos. Con ella un tenant arranca en unos 2 minutos. |
 | **cloud-init** | Primer arranque de cada EC2 de tenant: monta el volumen de datos (lo formatea solo si está vacío), lee el secreto del tenant desde SSM con el rol de la instancia, escribe la configuración de la app (incluido el nombre de la institución), clona la app en la versión pedida y arranca el servicio. También prepara la EC2 de la plataforma para ejecutar Ansible. |
 | **Ansible** | Configuración posterior de la **EC2 de la plataforma**: Prometheus, blackbox_exporter, Grafana (datasource, dashboard y alertas como código), y el portal, la API y el worker (Node, Terraform, OpenTofu, servicios systemd). Terraform sube el playbook a S3; una asociación de SSM lo vuelve a aplicar cuando cambia, sin SSH y sin recrear la instancia. Los tenants no usan Ansible: son inmutables y se recrean desde la AMI y cloud-init. |
@@ -153,16 +154,19 @@ El respaldo a pedido no cambia el estado del tenant. Todas las operaciones queda
 
 ## 6. Comparación técnica de los motores
 
-El enunciado admite, para Pulumi y CloudFormation, "segunda implementación pequeña o comparación técnica con el motor principal". Esta es la comparación, aplicada a lo que necesita esta plataforma:
+El enunciado pide, para Pulumi y CloudFormation, "segunda implementación pequeña o comparación técnica con el motor principal". CloudFormation tiene la implementación reducida; esta comparación cubre los tres, con lo que se observó al implementar CloudFormation:
 
 | Criterio | Terraform / OpenTofu (implementado) | Pulumi | CloudFormation |
 |---|---|---|---|
 | Lenguaje | HCL declarativo | TypeScript, Python, Go… (lenguajes generales) | YAML o JSON declarativo |
 | Estado | Archivo en S3 por tenant, con lock nativo de S3 | Backend propio (Pulumi Cloud) o S3 (`pulumi login s3://`), un stack por tenant | Lo guarda AWS (un stack por tenant); no hay archivo que proteger |
-| Reintento sin duplicar (RF-12) | `apply` sobre el mismo estado | `pulumi up` sobre el mismo stack | Si la creación falla, el stack queda en `ROLLBACK_COMPLETE` y hay que borrarlo antes de reintentar (salvo que se cree con `--disable-rollback`) |
-| Previsualizar la eliminación (RF-18) | `plan -destroy`, legible y en JSON | `pulumi preview --destroy` | No tiene vista previa del borrado: habría que listar los recursos del stack (`list-stack-resources`) |
+| Reintento sin duplicar (RF-12) | `apply` sobre el mismo estado | `pulumi up` sobre el mismo stack | Si la creación falla, el stack queda en `ROLLBACK_COMPLETE` (ya sin recursos) y no admite cambios: el motor lo borra y lo vuelve a crear |
+| Previsualizar la eliminación (RF-18) | `plan -destroy`, legible y en JSON | `pulumi preview --destroy` | No tiene vista previa del borrado: el motor lista los recursos del stack (`list-stack-resources`) |
+| Secretos generados | `random_password` + `aws_ssm_parameter` SecureString | Provider `random` + SSM | `AWS::SSM::Parameter` no admite SecureString: el motor crea el secreto fuera del stack |
+| Suspender (detener la EC2) | `aws_ec2_instance_state` | Recurso de estado del provider | No hay recurso: el motor usa `stop-instances` / `start-instances`, fuera del stack |
+| Datos que dependen de otro recurso (id del volumen en el user data) | `templatefile` con el id del recurso | Se interpolan *outputs* | El worker genera el user data antes de que exista el volumen: cloud-init lo busca por su nombre de dispositivo (`/dev/sdf`) |
 | Multi-nube | Sí (providers) | Sí | Solo AWS |
 | Secretos | Variables `sensitive`; el valor queda en el estado, que por eso se trata como secreto | Cifra los secretos dentro del estado | Parámetros `NoEcho` y referencias dinámicas a SSM |
 | Ajuste a esta plataforma | El worker ya lo usa; el mismo HCL sirve para dos motores | Sumaría Node/npm y el CLI de Pulumi al worker | Solo necesita el AWS CLI, pero el borrado y los reintentos son más rígidos |
 
-Por eso se eligió **Terraform como motor principal y OpenTofu como segundo motor real**: comparten plantillas, estado y comportamiento, y con eso se puede elegir el motor (RF-08) entre dos opciones probadas. Pulumi y CloudFormation aparecen deshabilitados en el asistente de creación.
+Por eso **Terraform es el motor principal**, **OpenTofu** el segundo (con las mismas plantillas, el mismo estado y el mismo comportamiento) y **CloudFormation** la implementación reducida. En el asistente se pueden elegir los tres; Pulumi aparece como "próximamente".

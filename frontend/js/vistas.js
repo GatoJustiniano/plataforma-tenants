@@ -450,7 +450,7 @@ async function pintarRespaldos(t, ocupado) {
     el.innerHTML = `<h2>Respaldos</h2><div class="nota mal">${esc(e.message)}</div>`; return;
   }
   const pol = r.politica;
-  const puedeRestaurar = t.estado === 'activo' && !ocupado;
+  const puedeRestaurar = t.estado === 'activo' && !ocupado && t.motor !== 'cloudformation';
   const filas = r.respaldos.map((s) => `<tr>
       <td>${fecha(s.fecha)}</td>
       <td><span class="badge ${s.origen === 'programado' ? '' : 'curso'}">${esc(TEXTO_ORIGEN[s.origen] || s.origen)}</span></td>
@@ -465,7 +465,8 @@ async function pintarRespaldos(t, ocupado) {
       <small class="muted">${pol ? `Programados: ${esc(pol.frecuencia)} a las 02:00 (hora de Bolivia), se guardan ${pol.retencion_dias} días` : ''}</small></div>
     ${r.respaldos.length ? `<table><thead><tr><th>Fecha</th><th>Origen</th><th>Estado</th><th>Tamaño</th><th>Vence</th><th>Snapshot</th><th></th></tr></thead>
       <tbody>${filas}</tbody></table>` : '<div class="vacio">Todavía no hay respaldos. El primero programado se crea en la próxima ventana del plan, o usa "Respaldar ahora".</div>'}
-    ${t.estado !== 'activo' && r.respaldos.length ? '<p class="muted"><small>Para restaurar, el tenant debe estar activo.</small></p>' : ''}
+    ${t.motor === 'cloudformation' && r.respaldos.length ? '<p class="muted"><small>Restaurar solo está disponible con Terraform u OpenTofu (CloudFormation es una implementación reducida).</small></p>'
+      : t.estado !== 'activo' && r.respaldos.length ? '<p class="muted"><small>Para restaurar, el tenant debe estar activo.</small></p>' : ''}
     <div id="confirmar-restaurar"></div>`;
 
   el.querySelectorAll('[data-restaurar]').forEach((b) => b.addEventListener('click', () => {

@@ -60,7 +60,7 @@ const MOTORES = {
   terraform: { nombre: 'Terraform', listo: true },
   opentofu: { nombre: 'OpenTofu', listo: true },
   pulumi: { nombre: 'Pulumi', listo: false },
-  cloudformation: { nombre: 'CloudFormation', listo: false },
+  cloudformation: { nombre: 'CloudFormation', listo: true }, // implementación reducida: sin restaurar
 };
 
 const usd = (n) => `~${Number(n).toFixed(1)} USD/mes`;
